@@ -1,0 +1,435 @@
+# frozen_string_literal: true
+
+require "test_helper"
+
+class PostTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+
+  def setup
+    @user = users(:john)
+    @root_post = posts(:root_post)
+    @reply_post = posts(:reply_post)
+    @remote_post = posts(:remote_post)
+    @comment_post = posts(:comment_post)
+    @article = articles(:ruby_article)
+  end
+
+  # ========== Validation Tests ==========
+
+  test "user가 있는 post는 유효하다" do
+    post = Post.new(body: "테스트 포스트", user: @user)
+
+    assert_predicate post, :valid?, post.errors.full_messages.join(", ")
+  end
+
+  test "federails_actor가 있는 post는 유효하다" do
+    actor = federails_actors(:john_actor)
+    post = Post.new(body: "리모트 포스트", federails_actor: actor, federated_url: "https://example.com/notes/1")
+
+    assert_predicate post, :valid?, post.errors.full_messages.join(", ")
+  end
+
+  test "user도 federails_actor도 없으면 유효하지 않다" do
+    post = Post.new(body: "고아 포스트")
+
+    assert_not post.valid?
+    assert_predicate post.errors[:base], :any?
+  end
+
+  test "body는 필수" do
+    post = Post.new(user: @user)
+
+    assert_not post.valid?
+    assert_predicate post.errors[:body], :any?
+  end
+
+  test "body가 빈 문자열이면 유효하지 않다" do
+    post = Post.new(body: "", user: @user)
+
+    assert_not post.valid?
+  end
+
+  test "human_attribute_name은 locale별 댓글 본문 속성명을 반환해야 한다" do
+    I18n.with_locale(:ko) do
+      assert_equal "댓글 내용", Post.human_attribute_name(:body)
+    end
+
+    I18n.with_locale(:ja) do
+      assert_equal "コメント内容", Post.human_attribute_name(:body)
+    end
+  end
+
+  # ========== Nested Set Tests ==========
+
+  test "root post는 parent가 없다" do
+    assert_nil @root_post.parent_id
+  end
+
+  test "reply는 parent가 있다" do
+    assert_equal @root_post.id, @reply_post.parent_id
+  end
+
+  test "root post는 children을 가진다" do
+    assert_includes @root_post.children, @reply_post
+  end
+
+  # ========== Federation Tests ==========
+
+  test "federation_actor_entity는 user를 반환한다 (로컬)" do
+    assert_equal @root_post.user, @root_post.federation_actor_entity
+  end
+
+  test "federation_actor_entity는 federails_actor를 반환한다 (리모트)" do
+    assert_equal @remote_post.federails_actor, @remote_post.federation_actor_entity
+  end
+
+  test "should_federate?는 entity가 있으면 true" do
+    assert_predicate @root_post, :should_federate?
+  end
+
+  test "federails 좋아요 콜백으로 좋아요와 취소를 처리한다" do
+    actor = Federails::Actor.create!(
+      federated_url: "https://remote.example/users/post-liker-#{SecureRandom.hex(4)}",
+      username: "post_liker",
+      name: "Post Liker",
+      server: "remote.example",
+      inbox_url: "https://remote.example/users/post-liker/inbox",
+      outbox_url: "https://remote.example/users/post-liker/outbox",
+      followers_url: "https://remote.example/users/post-liker/followers",
+      followings_url: "https://remote.example/users/post-liker/following",
+      profile_url: "https://remote.example/@post-liker",
+      actor_type: "Person",
+      local: false
+    )
+
+    actor_payload = { "id" => actor.federated_url }
+
+    assert_difference -> { Like.where(actor: actor, likeable: @root_post).count }, 1 do
+      @root_post.apply_remote_like(actor_payload)
+    end
+
+    assert_difference -> { Like.where(actor: actor, likeable: @root_post).count }, -1 do
+      @root_post.apply_remote_unlike(actor_payload)
+    end
+  end
+
+  # ========== Article Comment Tests ==========
+
+  test "comment?는 article_id가 있으면 true를 반환한다" do
+    assert_predicate @comment_post, :comment?
+  end
+
+  test "comment?는 article_id가 없으면 false를 반환한다" do
+    assert_not @root_post.comment?
+  end
+
+  test "reply는 parent가 있으면 parent를 반환한다" do
+    assert_equal @root_post, @reply_post.reply
+  end
+
+  test "reply는 parent가 없고 article이 있으면 article을 반환한다" do
+    assert_equal @article, @comment_post.reply
+  end
+
+  test "author_name은 user의 full_name을 반환한다" do
+    assert_equal @user.full_name, @root_post.author_name
+  end
+
+  test "author_name은 user가 없으면 federails_actor의 username을 반환한다" do
+    assert_equal @remote_post.federails_actor.username, @remote_post.author_name
+  end
+
+  test "author_name은 user도 actor도 없으면 익명을 반환한다" do
+    post = Post.new(body: "test")
+
+    assert_equal "익명", post.author_name
+  end
+
+  test "author_host는 federails_actor가 있으면 서버 정보를 반환한다" do
+    assert_equal "(#{@remote_post.federails_actor.server})", @remote_post.author_host
+  end
+
+  test "author_host는 로컬 user가 있으면 nil을 반환한다" do
+    assert_nil @root_post.author_host
+    assert_nil @comment_post.author_host
+  end
+
+  test "author_host는 federails_actor가 없으면 nil을 반환한다" do
+    assert_nil @root_post.author_host
+  end
+
+  # ========== Scope Tests ==========
+
+  test "comments 스코프는 article_id가 있는 post만 반환한다" do
+    comments = Post.comments
+
+    assert_includes comments, @comment_post
+    assert_not_includes comments, @root_post
+  end
+
+  test "standalone 스코프는 article_id가 없는 post만 반환한다" do
+    standalone = Post.standalone
+
+    assert_includes standalone, @root_post
+    assert_not_includes standalone, @comment_post
+  end
+
+  # ========== handle_federated_object? Tests ==========
+
+  # ========== Reply Notification Tests ==========
+
+  test "답글 생성 시 ReplyNotificationJob이 큐에 추가된다" do
+    other_user = users(:jane)
+    assert_enqueued_with(job: ReplyNotificationJob) do
+      Post.create!(body: "답글입니다", user: other_user, parent: @root_post)
+    end
+  end
+
+  test "루트 post 생성 시 ReplyNotificationJob이 큐에 추가되지 않는다" do
+    assert_no_enqueued_jobs(only: ReplyNotificationJob) do
+      Post.create!(body: "루트 포스트", user: @user)
+    end
+  end
+
+  test "자기 자신에게 답글 달면 알림이 가지 않는다" do
+    assert_no_enqueued_jobs(only: ReplyNotificationJob) do
+      Post.create!(body: "셀프 답글", user: @user, parent: @root_post)
+    end
+  end
+
+  test "parent에 user가 없으면 알림이 가지 않는다" do
+    actor = federails_actors(:john_actor)
+    remote_root = Post.create!(body: "리모트 루트", federails_actor: actor, federated_url: "https://remote.example/notes/rr1")
+    assert_no_enqueued_jobs(only: ReplyNotificationJob) do
+      Post.create!(body: "로컬 답글", user: @user, parent: remote_root)
+    end
+  end
+
+  # ========== handle_federated_object? Tests ==========
+
+  test "inReplyTo가 없는 Note를 수락한다" do
+    hash = { "type" => "Note", "content" => "Hello" }
+
+    assert Post.send(:handle_federated_object?, hash)
+  end
+
+  test "inReplyTo가 외부 URL이면 거부한다" do
+    hash = { "type" => "Note", "inReplyTo" => "https://example.com/some/external/post" }
+
+    assert_not Post.send(:handle_federated_object?, hash)
+  end
+
+  test "inReplyTo가 로컬 article URL이면 수락한다" do
+    local_host = Rails.application.routes.default_url_options[:host] || "www.example.com"
+    hash = { "type" => "Note", "inReplyTo" => "http://#{local_host}/articles/#{@article.id}" }
+
+    assert Post.send(:handle_federated_object?, hash)
+  end
+
+  test "inReplyTo가 로컬 post를 가리키면 수락한다" do
+    local_host = Rails.application.routes.default_url_options[:host] || "www.example.com"
+    hash = { "type" => "Note", "inReplyTo" => "http://#{local_host}/posts/#{@root_post.id}" }
+
+    assert Post.send(:handle_federated_object?, hash)
+  end
+
+  test "inReplyTo가 리모트 post의 federated_url이면 수락한다" do
+    hash = { "type" => "Note", "inReplyTo" => @remote_post.federated_url }
+
+    assert Post.send(:handle_federated_object?, hash)
+  end
+
+  # ========== from_activitypub_object Tests ==========
+
+  test "from_activitypub_object는 body HTML을 유지한다" do
+    hash = { "id" => "https://remote.example.com/notes/456", "content" => "<p>Hello <b>world</b></p>" }
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal "<p>Hello <b>world</b></p>", result[:body]
+    assert_equal "https://remote.example.com/notes/456", result[:federated_url]
+  end
+
+  test "from_activitypub_object는 로컬 post URL에서 parent_id를 추출한다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/999",
+      "content" => "로컬 답글",
+      "inReplyTo" => "http://www.example.com/posts/#{@root_post.id}"
+    }
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal @root_post.id.to_s, result[:parent_id]
+  end
+
+  test "from_activitypub_object는 기사 댓글을 가리키는 로컬 post URL에서 article_id도 채운다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/1000",
+      "content" => "기사 댓글에 대한 답글",
+      "inReplyTo" => "http://www.example.com/posts/#{@comment_post.id}"
+    }
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal @comment_post.id.to_s, result[:parent_id]
+    assert_equal @article.id, result[:article_id]
+  end
+
+  test "from_activitypub_object는 inReplyTo로 parent를 찾는다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/789",
+      "content" => "답글",
+      "inReplyTo" => @remote_post.federated_url
+    }
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal @remote_post.id, result[:parent_id]
+  end
+
+  test "from_activitypub_object는 article URL에서 article_id를 추출한다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/art1",
+      "content" => "기사 댓글",
+      "inReplyTo" => "http://www.example.com/articles/#{@article.id}"
+    }
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal @article.id.to_s, result[:article_id]
+    assert_nil result[:parent_id]
+  end
+
+  test "from_activitypub_object는 contentMap 본문을 우선 사용한다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/with-content-map",
+      "content" => "",
+      "contentMap" => { "ko" => "  로컬라이즈된 본문  " }
+    }
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal "로컬라이즈된 본문", result[:body]
+  end
+
+  test "from_activitypub_object는 첨부만 있는 노트에 폴백 본문을 채운다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/media-only",
+      "content" => "",
+      "attachment" => [
+        {
+          "type" => "Document",
+          "url" => "https://remote.example.com/media/image.png",
+          "mediaType" => "image/png"
+        }
+      ]
+    }
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal I18n.t("posts.remote_attachment_only_body"), result[:body]
+    assert_equal 1, result[:media_attachments].size
+  end
+
+  test "to_activitypub_object는 parent와 태그와 첨부를 함께 전달한다" do
+    post = Post.create!(
+      body: "태그와 첨부가 있는 답글",
+      user: @user,
+      parent: @root_post,
+      media_attachments: [ { "url" => "https://example.com/image.png", "mediaType" => "image/png", "name" => "image" } ]
+    )
+    post.tag_list = "ruby, rails"
+
+    captured = nil
+    Federails::DataTransformer::Note.stub(:to_federation, ->(record, content:, custom:) { captured = { record:, content:, custom: }; { "ok" => true } }) do
+      post.to_activitypub_object
+    end
+
+    assert_equal post, captured[:record]
+    assert_equal "태그와 첨부가 있는 답글", captured[:content]
+    assert_equal @root_post.federated_url || Rails.application.routes.url_helpers.post_url(@root_post), captured[:custom]["inReplyTo"]
+    assert_equal 2, captured[:custom]["tag"].size
+    assert_equal "Hashtag", captured[:custom]["tag"].first["type"]
+    assert_equal 1, captured[:custom]["attachment"].size
+  end
+
+  test "to_activitypub_object는 parent가 없으면 article을 inReplyTo로 사용한다" do
+    post = Post.create!(body: "기사 댓글", user: @user, article: @article)
+
+    captured = nil
+    Federails::DataTransformer::Note.stub(:to_federation, ->(_record, content:, custom:) { captured = { content:, custom: }; { "ok" => true } }) do
+      post.to_activitypub_object
+    end
+
+    assert_equal "기사 댓글", captured[:content]
+    assert_equal @article.federated_url || Rails.application.routes.url_helpers.article_url(@article), captured[:custom]["inReplyTo"]
+  end
+
+  test "federation_reply_recipients는 원격 parent의 actor URL을 반환한다" do
+    remote_actor = Federails::Actor.create!(
+      federated_url: "https://remote.example/users/original",
+      username: "original",
+      name: "Original",
+      server: "remote.example",
+      inbox_url: "https://remote.example/users/original/inbox",
+      outbox_url: "https://remote.example/users/original/outbox",
+      followers_url: "https://remote.example/users/original/followers",
+      followings_url: "https://remote.example/users/original/following",
+      profile_url: "https://remote.example/@original",
+      actor_type: "Person",
+      local: false
+    )
+    remote_root = Post.create!(body: "원격 포스트", federails_actor: remote_actor, federated_url: "https://remote.example/notes/456")
+    reply = Post.create!(body: "원격 포스트에 대한 답글", user: @user, parent: remote_root)
+
+    assert_equal [ "https://remote.example/users/original" ], reply.federation_reply_recipients
+  end
+
+  test "federation_reply_recipients는 로컬 parent인 경우 빈 배열을 반환한다" do
+    reply = Post.create!(body: "로컬 포스트에 대한 답글", user: @user, parent: @root_post)
+
+    assert_equal [], reply.federation_reply_recipients
+  end
+
+  test "federation_reply_recipients는 parent가 없는 경우 빈 배열을 반환한다" do
+    assert_equal [], @root_post.federation_reply_recipients
+  end
+
+  test "should_federate?는 user와 actor가 모두 없으면 false를 반환한다" do
+    post = Post.new(body: "고아 포스트")
+
+    assert_not post.should_federate?
+  end
+
+  test "likes_count는 nil이어도 0을 반환한다" do
+    post = Post.new(body: "like count", user: @user)
+    post.likers_count = nil
+
+    assert_equal 0, post.likes_count
+  end
+
+  test "존재하지 않는 parent_id는 검증 오류를 추가한다" do
+    post = Post.new(body: "잘못된 parent", user: @user, parent_id: -999)
+
+    assert_not post.valid?
+    assert_includes post.errors[:parent_id], "원본 포스트를 찾을 수 없습니다."
+  end
+
+  test "from_activitypub_object는 summary를 본문 폴백으로 사용한다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/summary-only",
+      "summary" => "요약만 있는 본문"
+    }
+
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal "요약만 있는 본문", result[:body]
+  end
+
+  test "from_activitypub_object는 첨부 이름들을 폴백 본문으로 합친다" do
+    hash = {
+      "id" => "https://remote.example.com/notes/attachments-with-names",
+      "attachment" => [
+        { "type" => "Document", "name" => "첫 번째 파일" },
+        { "type" => "Image", "name" => "두 번째 파일" }
+      ]
+    }
+
+    result = Post.from_activitypub_object(hash)
+
+    assert_equal "첫 번째 파일 · 두 번째 파일", result[:body]
+  end
+end

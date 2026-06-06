@@ -3,15 +3,6 @@ require "active_support/core_ext/integer/time"
 Warning[:deprecated] = true
 
 Rails.application.configure do
-  # config.after_initialize do
-  #   Bullet.enable        = true
-  #   Bullet.alert         = true
-  #   Bullet.bullet_logger = true
-  #   Bullet.console       = true
-  #   Bullet.rails_logger  = true
-  #   Bullet.add_footer    = true
-  # end
-
   # Settings specified here will take precedence over those in config/application.rb.
 
   # Make code changes take effect immediately without server restart.
@@ -51,6 +42,10 @@ Rails.application.configure do
   # Set localhost to be used by links generated in mailer templates.
   config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
 
+  config.action_mailer.delivery_method = :letter_opener
+
+  config.action_mailer.perform_deliveries = true
+
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
 
@@ -82,4 +77,25 @@ Rails.application.configure do
   # config.generators.apply_rubocop_autocorrect_after_generate!
 
   config.hosts << "ecclesiologically-nondoubtable-ora.ngrok-free.dev"
+
+  Rails.application.routes.default_url_options = { host: "localhost", port: 3000 }
+
+  config.colorize_logging = true
+  config.rails_semantic_logger.format = :color
+  config.after_initialize do
+    Prosopite.rails_logger = true
+  end
+end
+LetterOpener.configure do |config|
+  # To overrider the location for message storage.
+  # Default value is `tmp/letter_opener`
+
+  # To render only the message body, without any metadata or extra containers or styling.
+  # Default value is `:default` that renders styled message with showing useful metadata.
+  config.message_template = :light
+
+  # To change default file URI scheme you can provide `file_uri_scheme` config.
+  # It might be useful when you use WSL (Windows Subsystem for Linux) and default
+  # scheme doesn't work for you.
+  # Default value is blank
 end

@@ -17,7 +17,7 @@ class TagTest < ActiveSupport::TestCase
   # ========== Inheritance Tests ==========
 
   test "ActsAsTaggableOn::Tag를 상속해야 한다" do
-    assert Tag.ancestors.include?(ActsAsTaggableOn::Tag)
+    assert_includes Tag.ancestors, ActsAsTaggableOn::Tag
   end
 
   test "ActsAsTaggableOn 기능이 있어야 한다" do
@@ -56,11 +56,13 @@ class TagTest < ActiveSupport::TestCase
 
     # No tag should be in both lists
     overlap = confirmed & unconfirmed
+
     assert_empty overlap, "Tags should not be both confirmed and unconfirmed"
 
     # Together they should cover all tags with is_confirmed values
     total_with_confirmation = Tag.where.not(is_confirmed: nil).pluck(:id)
     combined = (confirmed + unconfirmed).sort
+
     assert_equal total_with_confirmation.sort, combined
   end
 
@@ -111,6 +113,7 @@ class TagTest < ActiveSupport::TestCase
 
       assert_nothing_raised do
         tag.save! if tag.valid?
+
         assert_equal name, tag.name
       end
     end
@@ -130,6 +133,7 @@ class TagTest < ActiveSupport::TestCase
 
       assert_nothing_raised do
         tag.save! if tag.valid?
+
         assert_equal name, tag.name
       end
     end
@@ -141,7 +145,7 @@ class TagTest < ActiveSupport::TestCase
     confirmed_tag = Tag.new(name: "confirmed-test", is_confirmed: true)
     confirmed_tag.save!
 
-    assert confirmed_tag.is_confirmed?
+    assert_predicate confirmed_tag, :is_confirmed?
     assert_includes Tag.confirmed, confirmed_tag
     assert_not_includes Tag.unconfirmed, confirmed_tag
   end
@@ -190,7 +194,7 @@ class TagTest < ActiveSupport::TestCase
       if tag.taggings_count == initial_count
         assert true, "Counter cache not implemented or not updated yet"
       else
-        assert tag.taggings_count > initial_count, "Taggings count should increase"
+        assert_operator tag.taggings_count, :>, initial_count, "Taggings count should increase"
       end
     else
       assert true, "taggings_count column not available"
@@ -222,6 +226,7 @@ class TagTest < ActiveSupport::TestCase
 
     # New tag should be created
     new_tag = Tag.find_by(name: "new-tag")
+
     assert_not_nil new_tag
   end
 
@@ -230,14 +235,16 @@ class TagTest < ActiveSupport::TestCase
     tag_name = "test-tag-" + SecureRandom.hex(4)
     created_tag = Tag.create!(name: tag_name, is_confirmed: true)
     found_tag = Tag.find_or_create_with_like_by_name(tag_name)
+
     assert_equal created_tag, found_tag
 
     # Test new tag creation
     new_tag_name = "brand-new-tag-" + SecureRandom.hex(4)
     newly_created_tag = Tag.find_or_create_with_like_by_name(new_tag_name)
+
     assert_not_nil newly_created_tag
     assert_equal new_tag_name, newly_created_tag.name
-    assert newly_created_tag.persisted?
+    assert_predicate newly_created_tag, :persisted?
   end
 
   # ========== Case Sensitivity Tests ==========
@@ -284,6 +291,7 @@ class TagTest < ActiveSupport::TestCase
       # Should handle special characters appropriately
       if tag.valid?
         tag.save!
+
         assert_equal name, tag.name
       else
         # If invalid, should have appropriate validation errors
@@ -311,6 +319,7 @@ class TagTest < ActiveSupport::TestCase
 
     assert_queries(1) do
       found_tag = Tag.find_by(name: tag_name)
+
       assert_equal @ruby_tag, found_tag
     end
   end
@@ -335,7 +344,8 @@ class TagTest < ActiveSupport::TestCase
 
     # Taggings should be cleaned up or nullified
     final_taggings_count = ActsAsTaggableOn::Tagging.count
-    assert final_taggings_count <= initial_taggings_count
+
+    assert_operator final_taggings_count, :<=, initial_taggings_count
   end
 
   # ========== Korean Content Integration Tests ==========
@@ -352,6 +362,7 @@ class TagTest < ActiveSupport::TestCase
     korean_tags.each do |tag_name|
       assert_includes korean_article.tag_list, tag_name
       tag = Tag.find_by(name: tag_name)
+
       assert_not_nil tag, "Korean tag '#{tag_name}' should be created"
     end
   end
@@ -367,6 +378,7 @@ class TagTest < ActiveSupport::TestCase
     mixed_tags.each do |tag_name|
       assert_includes article.tag_list, tag_name
       tag = Tag.find_by(name: tag_name)
+
       assert_not_nil tag, "Mixed language tag '#{tag_name}' should be created"
     end
   end
@@ -382,6 +394,7 @@ class TagTest < ActiveSupport::TestCase
     # Should either be valid or have appropriate length validation
     if tag.valid?
       tag.save!
+
       assert_equal long_name, tag.name
     else
       # Should have length validation error
@@ -394,7 +407,7 @@ class TagTest < ActiveSupport::TestCase
 
     # Should not be valid
     assert_not empty_tag.valid?
-    assert_includes empty_tag.errors[:name], "Name에 내용을 입력해 주세요"
+    assert_includes empty_tag.errors[:name], "내용을 입력해 주세요"
   end
 
   test "태그 이름에 있는 공백을 처리해야 한다" do
@@ -427,19 +440,21 @@ class TagTest < ActiveSupport::TestCase
 
   test "모든 fixture 태그는 유효해야 한다" do
     Tag.all.each do |tag|
-      assert tag.valid?, "Tag #{tag.name} should be valid: #{tag.errors.full_messages.join(', ')}"
+      assert_predicate tag, :valid?, "Tag #{tag.name} should be valid: #{tag.errors.full_messages.join(', ')}"
     end
   end
 
   test "fixture 태그는 적절한 확정 상태를 가져야 한다" do
     # Confirmed tags
     confirmed_fixture_tags = [ @ruby_tag, @rails_tag, @performance_tag, @special_tag ]
+
     confirmed_fixture_tags.each do |tag|
-      assert tag.is_confirmed?, "Tag #{tag.name} should be confirmed"
+      assert_predicate tag, :is_confirmed?, "Tag #{tag.name} should be confirmed"
     end
 
     # Unconfirmed tags
     unconfirmed_fixture_tags = [ @new_feature_tag, @korean_tag ]
+
     unconfirmed_fixture_tags.each do |tag|
       assert_not tag.is_confirmed?, "Tag #{tag.name} should be unconfirmed"
     end
@@ -449,7 +464,7 @@ class TagTest < ActiveSupport::TestCase
     Tag.all.each do |tag|
       assert_not_nil tag.name
       assert_not tag.name.empty?
-      assert tag.name.length > 0
+      assert_operator tag.name.length, :>, 0
     end
   end
 
@@ -483,7 +498,8 @@ class TagTest < ActiveSupport::TestCase
     # Verify they're all confirmed
     unconfirmed_tags.each do |tag|
       tag.reload
-      assert tag.is_confirmed?
+
+      assert_predicate tag, :is_confirmed?
       assert_includes Tag.confirmed, tag
     end
   end
@@ -501,6 +517,7 @@ class TagTest < ActiveSupport::TestCase
     Tag.where(taggings_count: 0, name: unused_tags.map(&:name)).delete_all
 
     final_count = Tag.count
+
     assert_equal initial_count - 3, final_count
   end
 

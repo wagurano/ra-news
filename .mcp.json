@@ -1,29 +1,12 @@
 {
   "mcpServers": {
-    "serena": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server",
-        "--context",
-        "ide-assistant",
-        "--project",
-        "./"
-      ]
-    },
     "sequential-thinking": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     },
-    "postgresql-mcp": {
-      "command": "npx",
-      "args": [
-        "@henkey/postgres-mcp-server",
-        "--connection-string",
-        "postgresql://localhost:5432/ra-news_development"
-      ]
+    "rails-ai-context": {
+      "command": "rails-ai-context",
+      "args": ["serve"]
     }
   }
 }

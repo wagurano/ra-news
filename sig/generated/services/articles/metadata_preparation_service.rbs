@@ -1,0 +1,25 @@
+# Generated from app/services/articles/metadata_preparation_service.rb with RBS::Inline
+
+module Articles
+  class MetadataPreparationService < OperationService
+    # : (Article article) -> Dry::Monads::Result
+    def call: (Article article) -> Dry::Monads::Result
+
+    private
+
+    # : (Article article) -> Dry::Monads::Result
+    def resolve_response: (Article article) -> Dry::Monads::Result
+
+    # : (Article article) -> void
+    def normalize_article_url: (Article article) -> void
+
+    # : (Article article) -> void
+    def apply_youtube_metadata: (Article article) -> void
+
+    # : (Article article, String body) -> void
+    def apply_webpage_metadata: (Article article, String body) -> void
+
+    # : (Article article) -> void
+    def ensure_article_slug: (Article article) -> void
+  end
+end

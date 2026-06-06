@@ -30,11 +30,19 @@ Rails.application.configure do
     end
   }
 
-  # Enable serving of images, stylesheets, and JavaScripts from an asset server.
-  # config.asset_host = "http://assets.example.com"
+  # Use the DEV asset host where it exists, but keep JP pages same-origin until a
+  # dedicated JP asset host is configured. This avoids cross-origin asset loads
+  # from ruby-news.jp to assets.ruby-news.dev without relying on CDN CORS.
+  config.asset_host = lambda do |_source, request = nil|
+    if request&.host == "ruby-news.jp"
+      nil
+    else
+      "https://assets.ruby-news.dev"
+    end
+  end
 
-  # Store uploaded files on the local file system (see config/storage.yml for options).
-  config.active_storage.service = :local
+  # Store uploaded files on Cloudflare R2 (S3-compatible; see config/storage.yml).
+  config.active_storage.service = :cloudflare
 
   # Assume all access to the app is happening through a SSL-terminating reverse proxy.
   config.assume_ssl = true
@@ -46,11 +54,12 @@ Rails.application.configure do
   # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
 
   # Log to STDOUT with the current request id as a default log tag.
-  config.log_tags = [ :request_id ]
-  config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)
-
+  config.log_tags = { request_id: :request_id, ip: :remote_ip }
+  $stdout.sync = true
+  config.rails_semantic_logger.add_file_appender = false
+  config.semantic_logger.add_appender(io: $stdout, formatter: config.rails_semantic_logger.format)
   # Change to "debug" to log everything (including potentially personally-identifiable information!).
-  config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
+  config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info").downcase.strip.to_sym
 
   # Prevent health checks from clogging up the logs.
   config.silence_healthcheck_path = "/up"
@@ -60,6 +69,7 @@ Rails.application.configure do
 
   # Replace the default in-process memory cache store with a durable alternative.
   config.cache_store = :solid_cache_store
+  config.session_store :cache_store, expire_after: 1.weeks
 
   # Replace the default in-process and non-durable queuing backend for Active Job.
   config.active_job.queue_adapter = :solid_queue
@@ -70,19 +80,22 @@ Rails.application.configure do
   # config.action_mailer.raise_delivery_errors = false
 
   # Set host to be used by links generated in mailer templates.
-  config.action_mailer.default_url_options = { host: "ruby-news.kr" }
+  config.action_mailer.default_url_options = { host: "ruby-news.dev" }
 
   # Set default URL options for URL helpers
-  Rails.application.routes.default_url_options = { host: "ruby-news.kr" }
+  Rails.application.routes.default_url_options = { host: "ruby-news.dev" }
 
   # Specify outgoing SMTP server. Remember to add smtp/* credentials via bin/rails credentials:edit.
-  # config.action_mailer.smtp_settings = {
-  #   user_name: Rails.application.credentials.dig(:smtp, :user_name),
-  #   password: Rails.application.credentials.dig(:smtp, :password),
-  #   address: "smtp.example.com",
-  #   port: 587,
-  #   authentication: :plain
-  # }
+  config.action_mailer.smtp_settings = {
+    address: "smtp.sendgrid.net",
+    port: 587,
+    user_name: "apikey",
+    password: Rails.application.credentials.dig(:smtp, :password),
+    authentication: :plain,
+    enable_starttls_auto: true,
+    enable_starttls: true,
+    domain: "ruby-news.dev"
+  }
 
   # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
   # the I18n.default_locale when a translation cannot be found).
@@ -102,4 +115,16 @@ Rails.application.configure do
   #
   # Skip DNS rebinding protection for the default health check endpoint.
   config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+
+  config.middleware.insert_before 0, Rack::Cors do
+    allow do
+      origins "https://ruby-news.dev",
+              "https://www.ruby-news.dev",
+              "https://ruby-news.kr",
+              "https://www.ruby-news.kr",
+              "https://ruby-news.jp",
+              "https://www.ruby-news.jp"
+      resource "/assets/*", headers: :any, methods: [ :get, :head, :options ]
+    end
+  end
 end

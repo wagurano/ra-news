@@ -17,14 +17,14 @@ default: &default
   encoding: unicode
   # For details on connection pooling, see Rails configuration guide
   # https://guides.rubyonrails.org/configuring.html#database-pooling
-  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 3 } %>
   checkout_timeout: 5
   reaping_frequency: 10
   schema_search_path: "ra_news,public"
 
 sqlite3: &sqlite3
   adapter: sqlite3
-  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 3 } %>
   timeout: 5000 # Connection timeout in milliseconds
 
 development:
@@ -35,6 +35,10 @@ development:
     <<: *sqlite3
     database: storage/development_cache.sqlite3
     migrations_paths: db/cache_migrate
+  queue:
+    <<: *sqlite3
+    database: storage/development_queue.sqlite3
+    migrations_paths: db/queue_migrate
 
   # The specified database role being used to connect to PostgreSQL.
   # To create additional roles in PostgreSQL see `$ createuser --help`.
@@ -68,8 +72,8 @@ development:
 # Do not set this db to the same as development or production.
 test:
   primary:
-    adapter: sqlite3
-    database: storage/test.sqlite3
+    <<: *default
+    url: <%= ENV.fetch("TEST_DATABASE_URL") { "postgres://localhost:5432/ra-news_test" } %>
   cache:
     <<: *sqlite3
     database: storage/test_cache.sqlite3
@@ -104,8 +108,8 @@ production:
     database: storage/production_cache.sqlite3
     migrations_paths: db/cache_migrate
   queue:
-    <<: *primary_production
-    url: <%= "#{ENV["DATABASE_URL"]}/ra-news_production_queue" %>
+    <<: *sqlite3
+    database: storage/production_queue.sqlite3
     migrations_paths: db/queue_migrate
   cable:
     <<: *sqlite3

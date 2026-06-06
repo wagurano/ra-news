@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class ArticleJob < ApplicationJob
@@ -15,6 +14,6 @@ class ArticleJob < ApplicationJob
       return nil
     end
 
-    ArticleLlmService.call(article)
+    ArticleAgentsService.new.call(article)
   end
 end

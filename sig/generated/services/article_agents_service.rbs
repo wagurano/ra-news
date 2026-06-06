@@ -1,0 +1,37 @@
+# Generated from app/services/article_agents_service.rb with RBS::Inline
+
+class ArticleAgentsService < OperationService
+  # : (Article article) -> Dry::Monads::Result
+  def call: (Article article) -> Dry::Monads::Result
+
+  # : (Article article) -> Dry::Monads::Result
+  def ensure_body: (Article article) -> Dry::Monads::Result
+
+  # : (Article article) -> Dry::Monads::Result
+  def run_agents: (Article article) -> Dry::Monads::Result
+
+  # : (Article article) -> Dry::Monads::Result
+  def run_embed: (Article article) -> Dry::Monads::Result
+
+  # : (Article article) -> Dry::Monads::Result
+  def run_humanize: (Article article) -> Dry::Monads::Result
+
+  # : (Article article) -> Dry::Monads::Result
+  def run_japanese: (Article article) -> Dry::Monads::Result
+
+  def run_thumbnail: (untyped article) -> untyped
+
+  private
+
+  # : (Hash[String, untyped] content) -> Hash[Symbol, untyped]
+  def build_japanese_attrs: (Hash[String, untyped] content) -> Hash[Symbol, untyped]
+
+  # : (Article article) -> String
+  def japanese_prompt: (Article article) -> String
+
+  # : (Article article) -> String
+  def user_prompt: (Article article) -> String
+
+  # : (Hash[String, untyped]? content) -> Hash[Symbol, untyped]
+  def extract_humanized: (Hash[String, untyped]? content) -> Hash[Symbol, untyped]
+end

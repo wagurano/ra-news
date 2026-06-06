@@ -1,0 +1,24 @@
+# Generated from app/jobs/article_thumbnail_job.rb with RBS::Inline
+
+# : Article의 summary_key를 기반으로 썸네일 이미지를 생성하여 ActiveStorage에 첨부한다
+class ArticleThumbnailJob < ApplicationJob
+  # : (Integer article_id) -> void
+  def perform: (Integer article_id) -> void
+
+  private
+
+  # YouTube 썸네일 해상도 후보 (높은 순)
+  YOUTUBE_THUMBNAIL_QUALITIES: untyped
+
+  # : (Article article) -> void
+  def attach_youtube_thumbnail: (Article article) -> void
+
+  # : (String video_id) -> Faraday::Response?
+  def fetch_youtube_thumbnail: (String video_id) -> Faraday::Response?
+
+  # : (Article article) -> void
+  def generate_ai_thumbnail: (Article article) -> void
+
+  # : (Array[String] summary_key) -> String
+  def build_prompt: (Array[String] summary_key) -> String
+end

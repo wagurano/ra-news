@@ -1,25 +1,27 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
-class ContentService < ApplicationService
+require "mcp_client"
+
+class ContentService < OperationService
   include LinkHelper
 
-  attr_reader :article #: Article
-
-  def initialize(article)
-    @article = article
-  end
-
-  def call
-    body = if article.is_youtube?
+  #: (Article article) -> Dry::Monads::Result
+  def call(article)
+    if article.is_youtube?
       # YouTube URL인 경우
-      execute_youtube(article.url)
+      step execute_youtube(article.url)
+    elsif github_url?(article.url)
+      # GitHub URL인 경우 README.md 가져오기
+      readme_url = github_readme_url(article.url)
+      return Failure(:no_content) unless readme_url
+
+      logger.info "GitHub README URL: #{readme_url}"
+      step execute_html(readme_url)
     else
-      # YouTube URL이 아닌 경우
-      execute_html(article.url)
+      # 일반 URL인 경우
+      step execute_html(article.url)
     end
-    body
   end
 
   protected
@@ -27,11 +29,18 @@ class ContentService < ApplicationService
   #: (url: String) -> String?
   def execute_html(url)
     logger.info "Fetching HTML content from: #{url}"
-    html_content = handle_redirection(url).body
-    return nil if html_content.blank?
+
+    html_content = if ENV.fetch("SCRAPLING_URL", nil).present?
+                     mcp_fetch_html(url)
+    else
+                     faraday_fetch_html(url)
+    end
+
+    return Failure(:no_content) if html_content.blank?
 
     # Readability를 사용하여 주요 콘텐츠 HTML 추출. Readability::Document는 전체 HTML 문자열을 인자로 받습니다.
-    Readability::Document.new(html_content).content
+    # github_url?(url) ? Success(Kramdown::Document.new(html_content).to_html) : Success(Readability::Document.new(html_content).content)
+    github_url?(url) ? Success(Inkmark.to_html(html_content, options: { preset: :recommended })) : Success(Readability::Document.new(html_content).content)
   end
 
   #: (url: String) -> String?
@@ -39,40 +48,96 @@ class ContentService < ApplicationService
     logger.info "Fetching Youtube content from: #{url}"
     youtube_id = youtube_id(url)
     logger.info "Youtube ID: #{youtube_id}"
-    return unless youtube_id
+    return Failure(:not_youtube) unless youtube_id
 
     transcript = nil
     video = Yt::Video.new id: youtube_id
-    video.captions.map(&:language).each do |lang|
-      rc = Youtube::Transcript.get(youtube_id, lang: lang)
-      transcript = format_transcript(rc.dig("actions"))
-      break if transcript.present?
+    begin
+      video.captions.map(&:language).each do |lang|
+        rc = Youtube::Transcript.get(youtube_id, lang: lang)
+        next if rc["error"].present?
+
+        transcript = format_transcript(rc.dig("actions"))
+        break if transcript.present?
+      end
+    rescue StandardError => e
+      logger.error "Error fetching Youtube transcript: #{e.message}"
     end
-    transcript
+
+    if transcript.blank?
+      begin
+        fetched_transcript = YoutubeRb::Transcript::YouTubeTranscriptApi.new.fetch(youtube_id)
+        transcript = YoutubeRb::Formatters::TextFormatter.new.format_transcript(fetched_transcript) if fetched_transcript.present?
+      rescue StandardError => e
+        logger.error "Error fetching Youtube transcript: #{e.message}"
+      end
+    end
+
+    return Failure(:no_content) if transcript.blank?
+
+    Success(transcript)
   end
 
   private
 
+  #: (String url) -> bool
+  def github_url?(url)
+    URI.parse(url).host&.match?(/\A(github\.com|raw\.githubusercontent\.com)\z/) == true
+  rescue URI::InvalidURIError
+    false
+  end
+
+  #: (String url) -> String?
+  def github_readme_url(url)
+    logger.info "Fetching GitHub README from: #{url}"
+    uri = URI.parse(url)
+    parts = uri.path.split("/").reject(&:blank?)
+    return nil if parts.size < 2
+
+    owner, repo = parts[0], parts[1]
+    repo = repo.delete_suffix(".git")
+
+    # branch가 URL에 명시된 경우: /owner/repo/tree/branch
+    branch = parts[3] if parts[2] == "tree"
+    branch ||= "HEAD"
+
+    "https://raw.githubusercontent.com/#{owner}/#{repo}/#{branch}/README.md"
+  rescue URI::InvalidURIError
+    nil
+  end
+
   #: (String url, ?Integer? count) -> Faraday::Response
-  def handle_redirection(url, count = 0)
+  def faraday_fetch_html(url, count = 0)
     response = Faraday.get(url)
     logger.debug "#{response.status} #{url}"
-    return response unless response.status.between?(300, 399) && response.headers["location"]
-    return response if count > 3
+    return response.body unless response.status.between?(300, 399) && response.headers["location"]
+    return response.body if count > 3
 
     logger.debug response.headers["location"]
     # 3xx 응답인 경우 리다이렉트된 URL을 사용
     redirect_url = response.headers["location"]
     url = if redirect_url.start_with?("http")
-                 redirect_url
+            redirect_url
     else
-                 URI.join(url, redirect_url).to_s
+            URI.join(url, redirect_url).to_s
     end
     logger.debug "Redirecting to: #{url}"
 
-    handle_redirection(url, count + 1)
+    faraday_fetch_html(url, count + 1)
   end
 
+
+  #: (String url) -> String?
+  def mcp_fetch_html(url)
+    client = MCPClient.connect(ENV.fetch("SCRAPLING_URL") { "http://localhost::8000/mcp" })
+    result = client.call_tool("fetch", { url: })&.[]("structuredContent")
+    logger.debug result
+    return nil if result["status"] != 200
+
+    result["content"].first
+  end
+
+  #: (Array[untyped]? actions) -> String?
   def format_transcript(actions)
     tsr = actions&.first&.dig("updateEngagementPanelAction", "content", "transcriptRenderer", "content", "transcriptSearchPanelRenderer", "body", "transcriptSegmentListRenderer", "initialSegments")
     return nil if tsr.nil? || tsr.empty?

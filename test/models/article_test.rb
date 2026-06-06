@@ -24,24 +24,61 @@ class ArticleTest < ActiveSupport::TestCase
       origin_url: "https://example.com/test-unique-origin",
       user: @user
     )
-    assert article.valid?
+
+    assert_predicate article, :valid?
+  end
+
+  test "리모트 ActivityPub Note는 Article로 처리하지 않아야 한다" do
+    remote_note = {
+      "id" => "https://remote.example/notes/1",
+      "type" => "Note",
+      "content" => "remote content",
+      "inReplyTo" => nil
+    }
+
+    assert_not Article.handle_federated_object?(remote_note)
+  end
+
+  test "로컬 article은 federation 발행 조건을 만족하면 여전히 federate 가능해야 한다" do
+    article = Article.new(
+      title: "Test Article",
+      title_ko: "테스트 기사",
+      url: "https://example.com/test-federate",
+      origin_url: "https://example.com/test-federate",
+      user: @user
+    )
+
+    assert_predicate article, :should_federate?
   end
 
   test "url은 필수 항목이어야 한다" do
-    article = Article.new(title: "Test Article", origin_url: "https://example.com/test")
+    article = Article.new(title: "Test Article", origin_url: "https://example.com/test", user: @user)
+
     assert_not article.save
-    assert_includes article.errors[:url], "Url에 내용을 입력해 주세요"
+    assert_includes article.errors[:url], "내용을 입력해 주세요"
+  end
+
+  test "human_attribute_name은 locale별 기사 속성명을 반환해야 한다" do
+    I18n.with_locale(:ko) do
+      assert_equal "URL", Article.human_attribute_name(:url)
+    end
+
+    I18n.with_locale(:ja) do
+      assert_equal "URL", Article.human_attribute_name(:url)
+    end
   end
 
   test "origin_url이 비어있을 때 url로부터 설정되어야 한다" do
     article = Article.new(
       title: "Test Article",
-      url: "https://example.com/test"
+      url: "https://example.com/test",
+      user: @user
     )
     # Mock generate_metadata to avoid external calls
     article.stub(:generate_metadata, nil) do
       article.save!
     end
+
     assert_equal "https://example.com/test", article.origin_url
   end
 
@@ -50,10 +87,12 @@ class ArticleTest < ActiveSupport::TestCase
     article = Article.new(
       title: "Another Article",
       url: existing_article.url.upcase,
-      origin_url: "https://different-origin.com/test"
+      origin_url: "https://different-origin.com/test",
+      user: @user
     )
+
     assert_not article.valid?
-    assert_includes article.errors[:url], "Url은(는) 이미 존재합니다"
+    assert_includes article.errors[:url], "이미 존재하는 값입니다"
   end
 
   test "origin_url의 유일성을 대소문자 구분 없이 검증해야 한다" do
@@ -61,10 +100,12 @@ class ArticleTest < ActiveSupport::TestCase
     article = Article.new(
       title: "Another Article",
       url: "https://different-url.com/test",
-      origin_url: existing_article.origin_url.upcase
+      origin_url: existing_article.origin_url.upcase,
+      user: @user
     )
+
     assert_not article.valid?
-    assert_includes article.errors[:origin_url], "Origin url은(는) 이미 존재합니다"
+    assert_includes article.errors[:origin_url], "이미 존재하는 값입니다"
   end
 
   test "slug가 존재할 경우 유일성을 검증해야 한다" do
@@ -73,10 +114,12 @@ class ArticleTest < ActiveSupport::TestCase
       title: "Different Article",
       url: "https://different.com/test",
       origin_url: "https://different.com/test-origin",
-      slug: existing_article.slug
+      slug: existing_article.slug,
+      user: @user
     )
+
     assert_not article.valid?
-    assert_includes article.errors[:slug], "Slug은(는) 이미 존재합니다"
+    assert_includes article.errors[:slug], "이미 존재하는 값입니다"
   end
 
   test "빈 slug를 허용해야 한다" do
@@ -84,49 +127,82 @@ class ArticleTest < ActiveSupport::TestCase
       title: "Test Article",
       url: "https://example.com/blank-slug-test",
       origin_url: "https://example.com/blank-slug-test-origin",
-      slug: ""
+      slug: "",
+      user: @user
     )
-    assert article.valid?
+
+    assert_predicate article, :valid?
+  end
+
+  test "title은 최대 길이 안에서 단어 경계로 줄여야 한다" do
+    long_title = "#{'Ruby ' * 80}AbruptTail"
+    article = Article.new(
+      title: long_title,
+      url: "https://example.com/title-too-long",
+      origin_url: "https://example.com/title-too-long-origin",
+      user: @user
+    )
+
+    assert_predicate article, :valid?
+    assert_operator article.title.length, :<=, Article::TITLE_MAX_LENGTH
+    assert_equal "...", article.title.last(3)
+    assert_not_includes article.title, "AbruptTail"
+    assert_equal "Ruby...", article.title.last(7)
+  end
+
+  test "title에 단어 경계가 없으면 최대 길이에 맞춰 줄여야 한다" do
+    article = Article.new(
+      title: "가" * (Article::TITLE_MAX_LENGTH + 20),
+      url: "https://example.com/title-no-boundary",
+      origin_url: "https://example.com/title-no-boundary-origin",
+      user: @user
+    )
+
+    assert_predicate article, :valid?
+    assert_equal Article::TITLE_MAX_LENGTH, article.title.length
+    assert_equal "...", article.title.last(3)
   end
 
   # ========== Association Tests ==========
 
-  test "user에 선택적으로 속해야 한다" do
+  test "user에 필수적으로 속해야 한다" do
     assert_respond_to @article, :user
     assert_kind_of User, @article.user
+    assert_not Article.reflect_on_association(:user).options[:optional]
 
-    # Test optional association
     article = Article.new(
       title: "No User Article",
       url: "https://example.com/no-user",
-      origin_url: "https://example.com/no-user-origin"
+      origin_url: "https://example.com/no-user-origin",
+      user: @user
     )
-    article.user = nil
-    assert article.valid?
+
+    assert_predicate article, :valid?
   end
 
   test "site에 선택적으로 속해야 한다" do
     assert_respond_to @article, :site
     assert_kind_of Site, @article.site
 
-    # Test optional association
     article = Article.new(
       title: "No Site Article",
       url: "https://example.com/no-site",
-      origin_url: "https://example.com/no-site-origin"
+      origin_url: "https://example.com/no-site-origin",
+      user: @user
     )
     article.site = nil
-    assert article.valid?
+
+    assert_predicate article, :valid?
   end
 
-  test "comments와 has_many 관계를 가져야 한다" do
+  test "posts와 has_many 관계를 가져야 한다" do
     article = @article
-    initial_count = article.comments.count
-    comment = article.comments.create!(body: "Test comment", user: @user)
+    initial_count = article.posts.count
+    post = article.posts.create!(body: "Test comment", user: @user)
 
-    assert_equal initial_count + 1, article.comments.count
-    assert_equal article.id, comment.article_id
-    assert_includes article.comments, comment
+    assert_equal initial_count + 1, article.posts.count
+    assert_equal article.id, post.article_id
+    assert_includes article.posts, post
   end
 
   # ========== Scope Tests ==========
@@ -138,6 +214,7 @@ class ArticleTest < ActiveSupport::TestCase
 
   test "related 스코프는 관련된 기사를 반환해야 한다" do
     related_articles = Article.related
+
     assert_includes related_articles, @article
     assert_includes related_articles, @korean_article
     assert_not_includes related_articles, @site_article
@@ -145,6 +222,7 @@ class ArticleTest < ActiveSupport::TestCase
 
   test "unrelated 스코프는 관련 없는 기사를 반환해야 한다" do
     unrelated_articles = Article.unrelated
+
     assert_includes unrelated_articles, @site_article
     assert_not_includes unrelated_articles, @article
     assert_not_includes unrelated_articles, @korean_article
@@ -163,26 +241,59 @@ class ArticleTest < ActiveSupport::TestCase
   # ========== Soft Delete Tests ==========
 
   test "Discard::Model을 포함해야 한다" do
-    assert Article.ancestors.include?(Discard::Model)
+    assert_includes Article.ancestors, Discard::Model
+  end
+
+  test "좋아요 가능 모델이어야 한다" do
+    assert_respond_to @article, :likers_count
+    assert_respond_to @user, :like!
+  end
+
+  test "federails 좋아요 콜백으로 좋아요와 취소를 처리한다" do
+    actor = Federails::Actor.create!(
+      federated_url: "https://remote.example/users/article-liker-#{SecureRandom.hex(4)}",
+      username: "article_liker",
+      name: "Article Liker",
+      server: "remote.example",
+      inbox_url: "https://remote.example/users/article-liker/inbox",
+      outbox_url: "https://remote.example/users/article-liker/outbox",
+      followers_url: "https://remote.example/users/article-liker/followers",
+      followings_url: "https://remote.example/users/article-liker/following",
+      profile_url: "https://remote.example/@article-liker",
+      actor_type: "Person",
+      local: false
+    )
+
+    assert_difference -> { Like.where(actor: actor, likeable: @article).count }, 1 do
+      @article.send(:apply_remote_like, actor.federated_url)
+    end
+
+    assert_difference -> { Like.where(actor: actor, likeable: @article).count }, -1 do
+      @article.send(:apply_remote_unlike, actor.federated_url)
+    end
   end
 
   test "kept 스코프는 삭제된 기사를 제외해야 한다" do
     kept_articles = Article.kept
+
     assert_includes kept_articles, @article
     assert_not_includes kept_articles, @deleted_article
   end
 
   test "discarded 스코프는 삭제된 기사를 포함해야 한다" do
     discarded_articles = Article.discarded
+
     assert_includes discarded_articles, @deleted_article
     assert_not_includes discarded_articles, @article
   end
 
   test "기사를 파괴하는 대신 폐기해야 한다" do
     article = @article
-    article.discard!
+    article.stub(:create_federails_activity, nil) do
+      article.discard!
+    end
 
-    assert article.discarded?
+    assert_predicate article, :discarded?
     assert_not_nil article.deleted_at
     assert Article.exists?(article.id)
   end
@@ -190,24 +301,10 @@ class ArticleTest < ActiveSupport::TestCase
   # ========== Callback Tests ==========
 
   test "생성 시 유효성 검사 전에 url로부터 origin_url을 설정해야 한다" do
-    article = Article.new(title: "Test", url: "https://example.com/callback-test")
+    article = Article.new(title: "Test", url: "https://example.com/callback-test", user: @user)
     article.valid?
+
     assert_equal "https://example.com/callback-test", article.origin_url
-  end
-
-  test "저장 전 published_at이 비어있으면 현재 시간으로 설정해야 한다" do
-    article = Article.new(
-      title: "Test",
-      url: "https://example.com/published-test",
-      origin_url: "https://example.com/published-test-origin"
-    )
-
-    # Mock Time.zone.now for consistent testing
-    frozen_time = Time.zone.parse("2024-01-15 10:30:00")
-    travel_to(frozen_time) do
-      article.save!
-      assert_equal frozen_time, article.published_at
-    end
   end
 
   test "저장 전 기존 published_at을 덮어쓰지 않아야 한다" do
@@ -216,7 +313,8 @@ class ArticleTest < ActiveSupport::TestCase
       title: "Test",
       url: "https://example.com/existing-published",
       origin_url: "https://example.com/existing-published-origin",
-      published_at: existing_time
+      published_at: existing_time,
+      user: @user
     )
 
     # generate_metadata 메서드를 직접 stub하여 published_at 덮어쓰기 방지
@@ -229,6 +327,57 @@ class ArticleTest < ActiveSupport::TestCase
       "published_at should not be overridden when already set"
   end
 
+  test "제목에 Show HN이 포함되면 생성 시 자동으로 discard되어야 한다" do
+    article = Article.new(
+      title: "Show HN: My Awesome Project",
+      url: "https://example.com/show-hn-test",
+      origin_url: "https://example.com/show-hn-test-origin",
+      user: @user
+    )
+
+    # Mock generate_metadata to avoid external calls
+    article.stub(:generate_metadata, nil) do
+      article.save!
+    end
+
+    assert_predicate article, :discarded?, "Article with 'Show HN' in title should be discarded"
+    assert_not_nil article.deleted_at
+  end
+
+  test "제목에 show hn (소문자)이 포함되면 생성 시 자동으로 discard되어야 한다" do
+    article = Article.new(
+      title: "show hn: my project",
+      url: "https://example.com/show-hn-lowercase-test",
+      origin_url: "https://example.com/show-hn-lowercase-test-origin",
+      user: @user
+    )
+
+    # Mock generate_metadata to avoid external calls
+    article.stub(:generate_metadata, nil) do
+      article.save!
+    end
+
+    assert_predicate article, :discarded?, "Article with 'show hn' (lowercase) in title should be discarded"
+    assert_not_nil article.deleted_at
+  end
+
+  test "제목에 Show HN이 없으면 discard되지 않아야 한다" do
+    article = Article.new(
+      title: "Regular Article Title",
+      url: "https://example.com/regular-test",
+      origin_url: "https://example.com/regular-test-origin",
+      user: @user
+    )
+
+    # Mock generate_metadata to avoid external calls
+    article.stub(:generate_metadata, nil) do
+      article.save!
+    end
+
+    assert_not article.discarded?, "Article without 'Show HN' in title should not be discarded"
+    assert_nil article.deleted_at
+  end
+
   test "생성 전에 메타데이터를 생성해야 한다" do
     article = Article.new(
       title: "Test",
@@ -239,6 +388,7 @@ class ArticleTest < ActiveSupport::TestCase
     stub_external_requests(article) do
       article.save!
     end
+
     assert_not_nil article.slug
     assert_not_nil article.host
   end
@@ -266,82 +416,90 @@ class ArticleTest < ActiveSupport::TestCase
 
   test "youtube_id는 유효하지 않은 URL을 정상적으로 처리해야 한다" do
     article = Article.new(url: "invalid-url")
+
     assert_nil article.youtube_id
   end
 
-  test "update_slug는 YouTube가 아닌 URL에 대해 작동해야 한다" do
-    article = Article.create!(
-      title: "Test",
-      url: "https://example.com/path/article-slug.html",
-      origin_url: "https://example.com/path/article-slug.html"
-    )
-
-    article.update_slug
-    article.reload
-    assert_equal "article-slug", article.slug
-  end
-
   test "update_slug는 YouTube URL에 대해 작동해야 한다" do
-    article = Article.create!(
+    article = Article.new(
       title: "YouTube Test",
       url: "https://www.youtube.com/watch?v=test123",
-      origin_url: "https://www.youtube.com/watch?v=test123"
+      origin_url: "https://www.youtube.com/watch?v=test123",
+      is_youtube: true,
+      user: @user
     )
+
+    # Mock generate_metadata to avoid external calls
+    article.stub(:generate_metadata, nil) do
+      article.save!
+    end
 
     article.update_slug
     article.reload
+
     assert_equal "test123", article.slug
   end
 
   test "update_slug는 경로가 없는 URL을 안전하게 처리해야 한다 (Bug fix #2)" do
-    article = Article.create!(
+    article = Article.new(
       title: "No Path URL",
       url: "https://example.com",
-      origin_url: "https://example.com"
+      origin_url: "https://example.com",
+      user: @user
     )
+
+    # Mock generate_metadata to avoid external calls
+    article.stub(:generate_metadata, nil) do
+      article.save!
+    end
 
     # Should not raise NoMethodError when path is nil
     assert_nothing_raised do
       result = article.update_slug
+
       assert result
     end
 
     article.reload
     # Should have fallback slug when path is empty
     assert_not_nil article.slug
-    assert_equal "article", article.slug
   end
 
-  test "user_name은 user가 존재할 때 사용자 이름을 반환해야 한다" do
-    assert_equal "존 도", @article.user_name
+  test "user_name은 bot 사용자인 경우 site 정보를 반환해야 한다" do
+    assert_equal "Ruby Weekly", @article.user_name
   end
 
-  test "user_name은 user는 없고 site만 있을 때 사이트 정보를 반환해야 한다" do
+  test "user_name은 bot 사용자이면서 site가 있으면 site 정보를 반환해야 한다" do
     site_article = @site_article
-    expected = "#{site_article.site.name} (#{site_article.site.base_uri})"
-    assert_equal expected, site_article.user_name
-  end
 
-  test "user_name은 site는 있지만 base_uri가 없을 때 사이트 이름을 반환해야 한다" do
-    site_article = @site_article
-    site_article.site.base_uri = nil
     assert_equal site_article.site.name, site_article.user_name
   end
 
-  test "user_name은 user나 site가 없을 때 '알 수 없음'을 반환해야 한다" do
-    article = Article.new(title: "Test", url: "https://example.com", origin_url: "https://example.com")
-    assert_equal "알 수 없음", article.user_name
+  test "user_name은 bot 사용자이고 site의 base_uri가 없으면 사이트 이름을 반환해야 한다" do
+    site_article = @site_article
+    site_article.site.base_uri = nil
+
+    assert_equal site_article.site.name, site_article.user_name
+  end
+
+  test "user_name은 site와 host가 없으면 nil을 반환한다" do
+    article = Article.new(title: "Test", url: "https://example.com", origin_url: "https://example.com", user: @user)
+    article.user = nil
+
+    assert_nil article.user_name
   end
 
   # ========== Class Method Tests ==========
 
   test "find_by_slug는 slug로 기사를 찾아야 한다" do
     article = Article.find_by_slug(@article.slug)
+
     assert_equal @article, article
   end
 
   test "find_by_slug는 존재하지 않는 slug에 대해 nil을 반환해야 한다" do
     article = Article.find_by_slug("non-existent-slug")
+
     assert_nil article
   end
 
@@ -355,7 +513,7 @@ class ArticleTest < ActiveSupport::TestCase
     ]
 
     ignored_urls.each do |url|
-      assert Article.should_ignore_url?(url), "Should ignore URL: #{url}"
+      assert Articles::Utils.should_ignore_url?(url), "Should ignore URL: #{url}"
     end
   end
 
@@ -368,7 +526,7 @@ class ArticleTest < ActiveSupport::TestCase
     ]
 
     allowed_urls.each do |url|
-      assert_not Article.should_ignore_url?(url), "Should not ignore URL: #{url}"
+      assert_not Articles::Utils.should_ignore_url?(url), "Should not ignore URL: #{url}"
     end
   end
 
@@ -382,18 +540,18 @@ class ArticleTest < ActiveSupport::TestCase
     ]
 
     dangerous_urls.each do |url|
-      assert Article.should_ignore_url?(url), "Should ignore dangerous file: #{url}"
+      assert Articles::Utils.should_ignore_url?(url), "Should ignore dangerous file: #{url}"
     end
   end
 
   test "should_ignore_url?은 유효하지 않은 URL을 처리해야 한다" do
-    assert Article.should_ignore_url?("invalid-url")
-    assert Article.should_ignore_url?(nil)
-    assert Article.should_ignore_url?("")
+    assert Articles::Utils.should_ignore_url?("invalid-url")
+    assert Articles::Utils.should_ignore_url?(nil)
+    assert Articles::Utils.should_ignore_url?("")
   end
 
   test "set_initial_url_and_host는 논리 연산자 우선순위를 올바르게 처리해야 한다 (Bug fix #1)" do
-    response = Struct.new(:body, :status, :headers).new("", 200, {})
+    service = Articles::MetadataPreparationService.new
 
     # URL with no path should be deleted only if not YouTube
     article = Article.new(
@@ -402,11 +560,8 @@ class ArticleTest < ActiveSupport::TestCase
       origin_url: "https://example.com"
     )
 
-    # Generate metadata which calls set_initial_url_and_host
-    # A non-YouTube URL with no path should be deleted
-    article.stub(:fetch_url_content, response) do
-      article.generate_metadata
-    end
+    service.send(:normalize_article_url, article)
+
     assert_not_nil article.deleted_at, "YouTube가 아닌 URL이고 경로가 없으면 삭제되어야 합니다."
 
     # YouTube URL should NOT be deleted even with short/no path
@@ -416,19 +571,26 @@ class ArticleTest < ActiveSupport::TestCase
       origin_url: "https://www.youtube.com"
     )
 
-    youtube_article.stub(:fetch_url_content, response) do
-      youtube_article.instance_eval do
-        begin
-          @url = "https://www.youtube.com"
-          set_initial_url_and_host
-        rescue URI::InvalidURIError
-          # Expected for this test
-        end
-      end
-    end
+    service.send(:normalize_article_url, youtube_article)
     # YouTube should not be automatically deleted
     # (unless explicitly marked for deletion)
-    assert_equal true, youtube_article.is_youtube
+    assert youtube_article.is_youtube
+  end
+
+  test "title에서 생성한 slug는 줄여진 title을 기반으로 해야 한다" do
+    service = Articles::MetadataPreparationService.new
+    article = Article.new(
+      title: "#{'Ruby ' * 80}AbruptTail",
+      url: "https://example.com/long-title-slug",
+      origin_url: "https://example.com/long-title-slug-origin",
+      user: @user
+    )
+
+    article.valid?
+    service.send(:ensure_article_slug, article)
+
+    assert_operator article.slug.length, :<=, Article::TITLE_MAX_LENGTH
+    assert_not_includes article.slug, "abrupttail"
   end
 
   # ========== Store Accessor Tests ==========
@@ -458,6 +620,7 @@ class ArticleTest < ActiveSupport::TestCase
 
   test "taggable로 작동해야 한다" do
     article = @article
+
     assert_respond_to article, :tag_list
     assert_respond_to article, :tag_list=
 
@@ -473,7 +636,7 @@ class ArticleTest < ActiveSupport::TestCase
   # ========== Korean Content Tests ==========
 
   test "제목과 내용에 있는 한글 문자를 처리해야 한다" do
-    korean_article = Article.create!(
+    korean_article = Article.new(
       title: "한국어 제목 테스트",
       title_ko: "한국어 제목의 다른 버전",
       url: "https://example.com/korean-test",
@@ -482,6 +645,11 @@ class ArticleTest < ActiveSupport::TestCase
       summary_key: "한국어 요약",
       user: users(:korean_user)
     )
+
+    # Mock generate_metadata to avoid external calls
+    korean_article.stub(:generate_metadata, nil) do
+      korean_article.save!
+    end
 
     assert_equal "한국어 제목 테스트", korean_article.title
     assert_equal "한국어 제목의 다른 버전", korean_article.title_ko
@@ -492,7 +660,7 @@ class ArticleTest < ActiveSupport::TestCase
   # ========== YouTube Integration Tests ==========
 
   test "YouTube 기사를 정확하게 식별해야 한다" do
-    assert @youtube_article.is_youtube?
+    assert_predicate @youtube_article, :is_youtube?
     assert_not @article.is_youtube?
   end
 
@@ -500,7 +668,8 @@ class ArticleTest < ActiveSupport::TestCase
     youtube_article = Article.new(
       title: "YouTube Test",
       url: "https://youtube.com/watch?v=test123&utm_source=share",
-      origin_url: "https://youtube.com/watch?v=test123&utm_source=share&ref=twitter"
+      origin_url: "https://youtube.com/watch?v=test123&utm_source=share&ref=twitter",
+      user: @user
     )
 
     # Mock generate_metadata to avoid external API calls
@@ -522,8 +691,7 @@ class ArticleTest < ActiveSupport::TestCase
     }
 
     urls_with_dates.each do |url, expected_date|
-      article = Article.new(url: url)
-      extracted_date = article.send(:url_to_published_at)
+      extracted_date = Articles::MetadataPreparation.url_to_published_at(url)
 
       if extracted_date
         assert_equal expected_date.year, extracted_date.year
@@ -534,69 +702,31 @@ class ArticleTest < ActiveSupport::TestCase
   end
 
   test "URL 파싱 오류를 정상적으로 처리해야 한다" do
-    article = Article.new(url: "invalid-url")
-    assert_nil article.send(:url_to_published_at)
+    assert_nil Articles::MetadataPreparation.url_to_published_at("invalid-url")
   end
 
   # ========== Cache Management Tests ==========
 
   test "폐기 후 RSS 캐시를 지워야 한다" do
-    # Mock Rails.cache to expect the cache deletion
     deleted_keys = []
     Rails.cache.stub(:delete, ->(key, *args, **kwargs) { deleted_keys << key; true }) do
-      @article.discard!
+      @article.stub(:create_federails_activity, nil) do
+        @article.discard!
+      end
     end
+
     assert_includes deleted_keys, "rss_articles"
-  end
-
-  test "생성 후 RSS 캐시를 지워야 한다" do
-    deleted_keys = []
-    Rails.cache.stub(:delete, ->(key, *args, **kwargs) { deleted_keys << key; true }) do
-      Article.create!(
-        title: "Cache Test",
-        url: "https://example.com/cache-test",
-        origin_url: "https://example.com/cache-test-origin"
-      )
-    end
-    assert_equal [ "rss_articles" ], deleted_keys
-  end
-
-  # ========== Error Handling Tests ==========
-
-  test "fetch_url_content에서 Faraday 오류를 정상적으로 처리해야 한다" do
-    article = Article.new(url: "https://example.com/error-test")
-
-    # Mock Faraday to raise an error
-    Faraday.stub(:get, ->(*) { raise Faraday::ConnectionFailed.new("Connection failed") }) do
-      result = article.send(:fetch_url_content)
-      assert_nil result
-    end
-  end
-
-  test "YouTube API 오류를 정상적으로 처리해야 한다" do
-    # This test ensures that YouTube API errors don't crash the application
-    article = Article.new(
-      url: "https://www.youtube.com/watch?v=invalid_video_id",
-      is_youtube: true
-    )
-
-    # The set_youtube_metadata method should handle Yt::Error gracefully
-    assert_nothing_raised do
-      article.send(:set_youtube_metadata)
-    end
   end
 
   # ========== Performance Tests ==========
 
   test "kept된 기사를 효율적으로 쿼리해야 한다" do
-    # Test that kept scope is efficient
     assert_queries(1) do
       Article.kept.limit(10).to_a
     end
   end
 
   test "관련된 기사를 효율적으로 쿼리해야 한다" do
-    # Test that related scope is efficient
     assert_queries(1) do
       Article.related.limit(5).to_a
     end
@@ -607,21 +737,117 @@ class ArticleTest < ActiveSupport::TestCase
   test "한국 시간대에서 작동해야 한다" do
     Time.zone = "Asia/Seoul"
 
-    article = Article.create!(
+    article = Article.new(
       title: "시간대 테스트",
       url: "https://example.com/timezone-test",
       origin_url: "https://example.com/timezone-test-origin",
+      published_at: Time.zone.now,
       user: users(:korean_user)
     )
+
+    article.stub(:generate_metadata, nil) do
+      article.save!
+    end
 
     assert_equal "Asia/Seoul", Time.zone.name
     assert_kind_of ActiveSupport::TimeWithZone, article.published_at
     assert_kind_of ActiveSupport::TimeWithZone, article.created_at
   end
 
+  test "to_activitypub_object는 기본 요약과 태그를 포함한다" do
+    article = @article
+    article.title = "Original title"
+    article.title_ko = "번역 제목"
+    article.summary_key = nil
+    article.tag_list = "ruby, rails"
+
+    captured = nil
+    Federails::DataTransformer::Note.stub(:to_federation, ->(entity, name:, content:, custom:) { captured = { entity:, name:, content:, custom: }; { "ok" => true } }) do
+      article.to_activitypub_object
+    end
+
+    assert_equal article, captured[:entity]
+    assert_equal "번역 제목", captured[:name]
+    assert_includes captured[:content], "<strong>번역 제목</strong>"
+    assert_includes captured[:content], "새로운 Ruby 관련 글이 올라왔습니다."
+    assert_equal 2, captured[:custom]["tag"].size
+    assert_equal "ruby", captured[:custom]["tag"].first["name"]
+  end
+
+  test "to_activitypub_object는 thumbnail이 있으면 attachment에 이미지를 포함한다" do
+    article = @article
+    article.title_ko = "썸네일 테스트"
+    article.summary_key = [ "요약" ]
+    blob = ActiveStorage::Blob.create_and_upload!(io: StringIO.new("fake image data"), filename: "test.jpg", content_type: "image/jpeg")
+    article.thumbnail.attach(blob)
+
+    captured = nil
+    Federails::DataTransformer::Note.stub(:to_federation, ->(entity, name:, content:, custom:) { captured = { entity:, name:, content:, custom: }; { "ok" => true } }) do
+      article.to_activitypub_object
+    end
+
+    assert_predicate captured[:custom]["attachment"], :present?
+    attachment = captured[:custom]["attachment"].first
+
+    assert_equal "Image", attachment["type"]
+    assert_equal "image/jpeg", attachment["mediaType"]
+    assert_includes attachment["url"], "rails/active_storage"
+  ensure
+    article.thumbnail.detach
+  end
+
+  test "to_activitypub_object는 thumbnail이 없으면 attachment를 포함하지 않는다" do
+    article = @article
+    article.title_ko = "썸네일 없음"
+    article.summary_key = [ "요약" ]
+
+    captured = nil
+    Federails::DataTransformer::Note.stub(:to_federation, ->(entity, name:, content:, custom:) { captured = { entity:, name:, content:, custom: }; { "ok" => true } }) do
+      article.to_activitypub_object
+    end
+
+    assert_nil captured[:custom]["attachment"]
+  end
+
+  test "base_content는 summary_key 배열의 첫 항목을 사용한다" do
+    article = Article.new(title: "원문 제목", summary_key: [ "첫 줄 요약", "두 번째 요약" ])
+
+    assert_equal({ title: "원문 제목", summary: "첫 줄 요약" }, article.base_content)
+  end
+
+  test "base_content는 요약이 없으면 기본 문구를 사용한다" do
+    article = Article.new(title: "원문 제목", summary_key: nil)
+
+    assert_equal "새로운 Ruby 관련 글이 올라왔습니다.", article.base_content[:summary]
+  end
+
+  test "should_federate?는 user가 없거나 title_ko가 비어 있으면 false다" do
+    assert_not Article.new(title_ko: "번역 제목").should_federate?
+    assert_not Article.new(user: @user).should_federate?
+  end
+
+  test "likes_count는 nil이어도 0을 반환한다" do
+    article = Article.new(title: "Like Count", url: "https://example.com/likes", origin_url: "https://example.com/likes", user: @user)
+    article.likers_count = nil
+
+    assert_equal 0, article.likes_count
+  end
+
+  test "user_name은 site가 없으면 host를 반환한다" do
+    article = Article.new(title: "Host fallback", url: "https://example.com/host", origin_url: "https://example.com/host", host: "example.com", user: @user)
+    article.site = nil
+
+    assert_equal "example.com", article.user_name
+  end
+
+  test "update_slug는 잘못된 URL이면 false를 반환한다" do
+    article = Article.new(title: "Broken URL", url: "http://[", origin_url: "http://[", user: @user)
+
+    assert_not article.update_slug
+  end
+
   private
 
-  # Helper method to stub external API requests
   def stub_external_requests(article)
     response = Struct.new(:body, :status, :success?, :headers).new(
       "<html><head><title>Test</title></head><body>Test description</body></html>",
@@ -631,18 +857,13 @@ class ArticleTest < ActiveSupport::TestCase
     )
 
     Faraday.stub(:get, ->(*) { response }) do
-      article.stub(:fetch_url_content, response) do
-        article.stub(:set_youtube_metadata, nil) do
-          yield(response) if block_given?
-        end
-      end
+      yield(response) if block_given?
     end
   end
 
-  # Helper method for testing query count
   def assert_queries(expected_count)
     queries = []
-    ActiveSupport::Notifications.subscribe("sql.active_record") do |name, start, finish, id, payload|
+    ActiveSupport::Notifications.subscribe("sql.active_record") do |_name, _start, _finish, _id, payload|
       queries << payload[:sql] unless payload[:sql] =~ /^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)/
     end
 

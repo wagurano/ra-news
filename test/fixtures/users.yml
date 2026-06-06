@@ -1,67 +1,87 @@
 # frozen_string_literal: true
 
-<% password_digest = BCrypt::Password.create("password") %>
-<% admin_password_digest = BCrypt::Password.create("admin_password") %>
+<% require 'bcrypt' %>
+<% encrypted_password = BCrypt::Password.create("password") %>
+<% admin_encrypted_password = BCrypt::Password.create("admin_password") %>
 
 # Regular users
 john:
-  email_address: john@example.com
+  email: john@example.com
   name: 존 도
-  password_digest: <%= password_digest %>
+  username: john
+  encrypted_password: <%= encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user
     - editor
+    - bot
 
 jane:
-  email_address: jane@example.com
+  email: jane@example.com
   name: 제인 스미스
-  password_digest: <%= password_digest %>
+  username: jane
+  encrypted_password: <%= encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user
+    - bot
 
 # Admin user
 admin:
-  email_address: admin@example.com
+  email: admin@example.com
   name: 관리자
-  password_digest: <%= admin_password_digest %>
+  username: admin
+  encrypted_password: <%= admin_encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user
     - admin
 
 # Test users with Korean names
 korean_user:
-  email_address: korean@example.com
+  email: korean@example.com
   name: 김철수
-  password_digest: <%= password_digest %>
+  username: korean_user
+  encrypted_password: <%= encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user
+    - bot
 
 user_with_spaces:
-  email_address: spaces@example.com
+  email: spaces@example.com
   name: 홍 길 동
-  password_digest: <%= password_digest %>
+  username: user_with_spaces
+  encrypted_password: <%= encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user
 
 # User for validation testing
 minimal_user:
-  email_address: minimal@example.com
+  email: minimal@example.com
   name: 최소
-  password_digest: <%= password_digest %>
+  username: minimal_user
+  encrypted_password: <%= encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user
 
 # Legacy fixture names for backwards compatibility
 one:
-  email_address: one@example.com
+  email: one@example.com
   name: 사용자 일
-  password_digest: <%= password_digest %>
+  username: user_one
+  encrypted_password: <%= encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user
 
 two:
-  email_address: two@example.com
+  email: two@example.com
   name: 사용자 이
-  password_digest: <%= password_digest %>
+  username: user_two
+  encrypted_password: <%= encrypted_password %>
+  confirmed_at: <%= Time.now.utc %>
   roles:
     - user

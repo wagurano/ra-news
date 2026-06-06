@@ -1,0 +1,25 @@
+# Generated from app/functions/articles/query.rb with RBS::Inline
+
+module Articles
+  module Query
+    extend FunctionLogger
+
+    DEFAULT_INCLUDES: untyped
+
+    def self.index_html: (?untyped search) -> untyped
+
+    def self.index_json: (?untyped search) -> untyped
+
+    def self.others: () -> untyped
+
+    def self.tagged: (untyped keyword) -> untyped
+
+    private def self.index_scope: (untyped search) -> untyped
+
+    private def self.excluded_related_article_ids: (untyped scope) -> untyped
+
+    private def self.others_scope: () -> untyped
+
+    private def self.base_scope: () -> untyped
+  end
+end

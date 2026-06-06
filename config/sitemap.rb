@@ -1,29 +1,11 @@
-# Set the host name for URL creation
-SitemapGenerator::Sitemap.create(
-  default_host: "https://ruby-news.kr",
-  sitemaps_path: "sitemaps/"
-) do
-  # Put links creation logic here.
-  #
-  # The root path '/' and sitemap index file are added automatically for you.
-  # Links are added to the Sitemap in the order they are specified.
-  #
-  # Usage: add(path, options={})
-  #        (default options are used if you don't specify)
-  #
-  # Defaults: :priority => 0.5, :changefreq => 'weekly',
-  #           :lastmod => Time.now, :host => default_host
-  #
-  # Examples:
-  #
-  # Add '/articles'
-  #
-  #   add articles_path, :priority => 0.7, :changefreq => 'daily'
-  Article.kept.where.not(slug: nil).find_in_batches(batch_size: 200, order: [ :desc ]) do |group|
-    group.each do |article|
-      add article_path(article.slug), lastmod: article.updated_at
-    end
-  end
-end
-# Compress set to true will generate an '.xml.gz' file
-SitemapGenerator::Sitemap.compress = true
+# config/sitemap.rb
+# 실행: bundle exec rake sitemap:refresh:no_ping
+#
+# 출력 파일:
+#   public/sitemaps/sitemap.xml.gz   <- 사이트맵 인덱스
+#   public/sitemaps/sitemap1.xml.gz  <- 전체 URL
+#
+# ping 없음: Google은 2023년 말 sitemap ping 엔드포인트를 공식 폐지.
+# 사이트맵 등록은 Google Search Console에서 직접 수행한다.
+
+SitemapBuilder.build

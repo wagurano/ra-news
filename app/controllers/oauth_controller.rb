@@ -1,0 +1,60 @@
+# frozen_string_literal: true
+# rbs_inline: enabled
+
+class OauthController < ApplicationController
+  skip_before_action :authenticate_user!
+
+  def install
+    provider = params[:provider].presence || "slack"
+
+    case provider
+    when "slack"
+      # slack
+      unless Configs::Slack.configured?
+        redirect_to edit_user_registration_path, alert: "Slack 연동이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요."
+        return
+      end
+    when "discord"
+      # discord
+      unless Configs::Discord.configured?
+        redirect_to edit_user_registration_path, alert: "Discord 연동이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요."
+        return
+      end
+    else
+      redirect_to edit_user_registration_path, alert: "지원하지 않는 연동입니다."
+      return
+    end
+
+    state = SecureRandom.hex(16)
+
+    authorize_url = case provider
+    when "slack"
+      session[:slack_oauth_state] = state
+      SlackClient.authorize_url(
+        redirect_uri: slack_oauth_callback_url,
+        state:
+      )
+    when "discord"
+      session[:discord_oauth_state] = state
+      DiscordClient.authorize_url(
+        redirect_uri: discord_oauth_callback_url,
+        state:
+      )
+    end
+
+    redirect_to authorize_url, allow_other_host: true
+  end
+
+  def result
+    @provider = params[:provider]
+    @success = params[:success] == "true"
+    @channel_name = params[:channel_name]
+    @error = params[:error]
+    render Views::Oauth::Result.new(
+      provider: @provider,
+      success: @success,
+      channel_name: @channel_name,
+      error: @error
+    )
+  end
+end

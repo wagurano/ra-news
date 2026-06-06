@@ -1,17 +1,17 @@
 class UserResource < Madmin::Resource
   # Attributes
   attribute :id, form: false
+  attribute :username, form: false, index: true
   attribute :name
-  attribute :email_address, index: true
+  attribute :email, index: true
+  attribute :signup_host, form: false
+  attribute :confirmed?, index: true
 
   attribute :created_at, form: false
   attribute :updated_at, form: false
 
-  attribute :password, index: false, show: false
-  attribute :password_confirmation, index: false, show: false
-
   # Associations
-  attribute :roles, index: false
+  attribute :roles, index: false, form: false
 
   # Add scopes to easily filter records
   # scope :published

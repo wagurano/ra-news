@@ -1,87 +1,179 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class Article < ApplicationRecord
-  include PgSearch::Model
+  # ── Constants ────────────────────────────────────────────────────────
+  TITLE_MAX_LENGTH = 120
+  TITLE_OMISSION = "..."
+  TITLE_BOUNDARY_MIN_RATIO = 0.6
+  TITLE_BOUNDARY_PATTERN = /[\s[:punct:]、。，．！？；：·|｜-]/
 
+  # ── Extend ───────────────────────────────────────────────────────────
+  extend FriendlyId
+  friendly_id :slug, use: :slugged
+
+  # ── Includes ─────────────────────────────────────────────────────────
+  include PgSearch::Model
   include Discard::Model
+  include Federails::DataEntity
+  include FederailsLikeable
+  include ArticleClassMethods
+  include LocalizedDisplay
+
+  # ── Framework macros ─────────────────────────────────────────────────
+  self.discard_column = :deleted_at
+  acts_as_taggable_on :tags
 
   # SQLite는 벡터 임베딩을 지원하지 않으므로 PostgreSQL에서만 활성화
-  has_neighbors :embedding, dimensions: 1536 unless Rails.env.test?
+  has_neighbors :embedding, dimensions: 1536
 
-  self.discard_column = :deleted_at
-
-  multisearchable against: [ :title, :title_ko, :summary_key, :summary_detail, :body ], if: lambda { |record| record.deleted_at.nil? }
-
-  scope :full_text_search_for, ->(term) do
-    joins(:pg_search_document).merge(
-      PgSearch.multisearch(term).where(searchable_type: self.name)
-    )
-  end
-
-  scope :related, -> { where(is_related: true) }
-
-  scope :unrelated, -> { where(is_related: false) }
-
-  scope :confirmed, -> { where("slug IS NOT NULL AND title_ko IS NOT NULL") }
-
-  pg_search_scope :title_matching, against: [ :title, :title_ko ], using: { tsearch: { dictionary: "korean" } }
-
-  pg_search_scope :body_matching, against: [ :body, :summary_body ], using: { tsearch: { dictionary: "korean" } }
-
-  belongs_to :user, optional: true
-
-  belongs_to :site, optional: true
-
-  has_many :comments, dependent: :nullify
+  multisearchable against: [
+    :title, :title_ko, :title_ja,
+    :summary_key, :summary_key_ja,
+    :summary_detail, :summary_detail_ja,
+    :body, :summary_body, :summary_body_ja
+  ],
+                   if: ->(record) { record.deleted_at.nil? }
 
   store_accessor :summary_detail, :introduction, :conclusion, prefix: :summary
+  store_accessor :summary_detail_ja, :introduction, :conclusion, prefix: :summary_ja
+  store_accessor :social_post_ids, :twitter_id, :mastodon_id
 
+  # ── Associations ─────────────────────────────────────────────────────
+  belongs_to :user
+  belongs_to :site, optional: true
+  belongs_to :federails_actor, class_name: "Federails::Actor", optional: true
+
+  has_many :posts, dependent: :nullify
+  has_many :notification_deliveries, dependent: :destroy
+
+  has_one_attached :thumbnail
+
+  # ── Scopes ───────────────────────────────────────────────────────────
+  # 하이브리드 전문 검색:
+  #   1) tsvector_content_tsearch(textsearch_ko, 'korean') — 한국어 형태소 + 한자
+  #   2) content LIKE(pg_bigm) — 한국어 사전이 못 잡는 일본어 가나 등 부분 일치 폴백
+  # 두 조건을 OR로 결합하고, 한국어 ts_rank를 1차 정렬(가나 전용 매치는 rank 0 →
+  # created_at 최신순으로 후순위)로 사용한다.
+  # LIKE는 gin_bigm_ops 인덱스를 타지만 ILIKE는 타지 않으므로 LIKE를 사용한다.
+  scope :full_text_search_for, ->(term) do
+    term = term.to_s.strip
+    next none if term.blank?
+
+    tsquery = "websearch_to_tsquery('korean', #{connection.quote(term)})"
+    like    = connection.quote("%#{sanitize_sql_like(term)}%")
+
+    joins(:pg_search_document)
+      .where(
+        "pg_search_documents.tsvector_content_tsearch @@ #{tsquery} " \
+        "OR pg_search_documents.content LIKE #{like}"
+      )
+      .order(Arel.sql("ts_rank(pg_search_documents.tsvector_content_tsearch, #{tsquery}) DESC"), created_at: :desc)
+  end
+  scope :related, -> { kept.where(is_related: true) }
+  scope :unrelated, -> { kept.where(is_related: false) }
+  scope :confirmed, -> { where("slug IS NOT NULL AND title_ko IS NOT NULL") }
+
+  # TOAST 컬럼(body, summary_body, embedding) 제외 스코프
+  scope :without_toast, -> {
+    select(column_names - %w[body summary_body embedding])
+  }
+
+  # ID + 필수 컬럼만 선택 (Admin용)
+  scope :for_admin_index, -> {
+    select(:id, :title_ko, :slug, :host, :is_related, :published_at, :created_at, :updated_at)
+  }
+
+  pg_search_scope :title_matching, against: [ :title, :title_ko ], using: { tsearch: { dictionary: "korean" } }
+  pg_search_scope :body_matching, against: [ :body, :summary_body ], using: { tsearch: { dictionary: "korean" } }
+
+  # ── Validations ──────────────────────────────────────────────────────
+  validates :title, length: { maximum: TITLE_MAX_LENGTH }, allow_blank: true
   validates :url, :origin_url, presence: true, uniqueness: { case_sensitive: false }
   validates :slug, uniqueness: true, allow_blank: true
 
-  before_create :generate_metadata
-
-  acts_as_taggable_on :tags
-
-  after_discard :clear_rss_cache
-  after_commit :clear_rss_cache, on: [ :create, :update, :destroy ]
-
-  before_save do
-    # published_at이 없으면 현재 시간으로 설정.
-    # 단, LLM 요약 전에는 원본 URL에서 최대한 추출하는 것이 좋으므로,
-    # 이 부분은 generate_metadata 내에서 처리되도록 합니다.
-    self.published_at ||= Time.zone.now
-  end
-
+  # ── Callbacks ────────────────────────────────────────────────────────
   before_validation on: :create do
     self.origin_url = url if origin_url.blank?
   end
 
-  # YouTube URL의 정규화된 호스트를 상수로 정의
-  YOUTUBE_NORMALIZED_HOST = "www.youtube.com".freeze
+  before_create :generate_metadata
 
-  def generate_metadata #: void
-    return unless url.is_a?(String)
+  before_save do
+    # 제목에 "Show HN"이 포함되어 있으면 discard 처리
+    if title.present? && title.match?(/Show HN/i)
+      self.deleted_at = Time.zone.now
+    end
+  end
 
-    response = fetch_url_content
-    return unless response
+  after_commit :clear_rss_cache, on: [ :create, :update, :destroy ]
 
-    handle_redirection(response)
+  after_discard do
+    clear_rss_cache
+    SocialDeleteJob.perform_later(id)
+    create_federails_activity "Delete"
+  end
 
-    set_initial_url_and_host # URL 및 호스트 초기 설정, 삭제 여부 판단
+  after_undiscard do
+    create_federails_activity "Undo"
+  end
 
-    if is_youtube?
-      set_youtube_metadata
-    else
-      set_webpage_metadata(response.body)
+  # ── Federation ───────────────────────────────────────────────────────
+  acts_as_federails_data handles: "Note",
+                         actor_entity_method: :bot_user,
+                         soft_deleted_method: :discarded?,
+                         soft_delete_date_method: :deleted_at,
+                         should_federate_method: :should_federate?
+
+  on_federails_delete_requested -> { logger.info { "Federated article deletion requested #{id}" }; discard! }
+  on_federails_undelete_requested :undiscard!
+
+  # ── Public Instance Methods ──────────────────────────────────────────
+
+  #: () -> Hash[String, untyped]
+  def to_activitypub_object
+    content_data = base_content
+    title = content_data[:title]
+    summary = content_data[:summary]
+
+    # HTML 포맷팅으로 Mastodon에서 더 멋있게 표시
+    article_url = Rails.application.routes.url_helpers.article_url(self)
+    # ActivityStreams 표준은 문자열 키를 사용하므로 custom 해시도 문자열 키로 통일
+    custom = { "url" => article_url }
+
+    # 해시태그 생성 (태그가 있는 경우)
+    custom["tag"] = tag_list.map { |t| { "type" => "Hashtag", "name" => t } } if tag_list.present?
+
+    # HTML 콘텐츠 구성
+    content_parts = []
+    content_parts << "<p><strong>#{title}</strong></p>"
+    content_parts << "<p>#{summary}</p>"
+
+    # 링크 추가 (짧은 텍스트로)
+    link_html = "<p><a href=\"#{article_url}\">🔗 원문 보기</a></p>"
+    content_parts << link_html
+
+    full_content = content_parts.join("\n")
+
+    # 썸네일 이미지 첨부
+    if thumbnail.attached?
+      thumb_url = Rails.application.routes.url_helpers.rails_blob_url(thumbnail, disposition: "inline")
+      custom["attachment"] = [ { "type" => "Image", "mediaType" => thumbnail.blob.content_type, "url" => thumb_url } ]
     end
 
-    self.slug = "#{Time.zone.now.strftime('%Y%m%d')}-#{SecureRandom.hex(4)}" unless slug.present?
+    Federails::DataTransformer::Note.to_federation(
+      self, name: title_ko, content: full_content, custom:
+    )
+  end
 
-    # slug 중복 처리 (slug가 설정된 후에만 확인)
-    self.slug = "#{slug}-#{SecureRandom.hex(4)}" if slug.present? && Article.exists?(slug: self.slug)
+  def generate_metadata #: void
+    result = metadata_service.call(self)
+    logger.debug { "Article metadata preparation failed for #{url}: #{result.failure}" } if result.failure?
+  end
+
+  #: (untyped value) -> untyped
+  def title=(value)
+    super(Articles::Utils.truncate_title(value))
   end
 
   def youtube_id #: String?
@@ -100,182 +192,91 @@ class Article < ApplicationRecord
   end
 
   def update_slug #: bool
-    new_slug = is_youtube? ? youtube_id : URI.parse(url).path&.split("/")&.last&.split(".")&.first
+    if is_youtube?
+      new_slug = youtube_id
+    else
+      path = URI.parse(url).path
+      new_slug = path&.split("/")&.last&.split(".")&.first
+      new_slug = random_slug if new_slug.blank?
+    end
     update(slug: new_slug)
   rescue URI::InvalidURIError
     logger.error "Invalid URI for slug update: #{url}"
     false
   end
 
-  def update_published_at #: bool
-    response = fetch_url_content
-    return false unless response
-
-    update(published_at: url_to_published_at || extract_published_at_from_content(response.body) || Time.zone.now)
-  end
-
-  # slug로 Article을 찾는 메서드
-  def self.find_by_slug(slug)
-    find_by(slug: slug)
-  end
-
-  # 도메인과 서브도메인을 정확히 체크하는 클래스 메서드
-  #: (String url) -> bool
-  def self.should_ignore_url?(url)
-    return true if url.blank?
-
-    begin
-      uri = URI.parse(url)
-      host = uri.host&.downcase
-      return true if host.blank?
-
-      # Check for dangerous file extensions
-      return true if %w[.epub .pdf .exe .zip .rar].any? { |ext| uri.path.end_with?(ext) }
-
-      Preference.ignore_hosts.any? do |ignore_host|
-        # 정확한 도메인 매칭
-        host == ignore_host ||
-        host.end_with?(".#{ignore_host}") ||
-        # 추가적으로 www 서브도메인도 고려
-        (host.start_with?("www.") && host[4..] == ignore_host) ||
-        # 서브도메인 매칭
-        host.start_with?("job")
-      end
-    rescue URI::InvalidURIError => e
-      logger.warn "Invalid URI detected: #{url} - #{e.message}"
-      true
-    end
-  end
-
+  #: () -> String?
   def user_name
-    return user&.name.present? ? user.name : "알 수 없음" if user.present?
-
     if site.present?
-      site.base_uri.present? ? "#{site.name} (#{site.base_uri})" : site.name
+      site.name
     else
-      "알 수 없음"
+      host
     end
   end
 
+  #: () -> { title: String?, summary: String }
+  def base_content
+    title = title_ko.presence || self.title
+    summary = summary_key&.first.presence || "새로운 Ruby 관련 글이 올라왔습니다."
+    { title:, summary: }
+  end
+
+  #: () -> bool
+  def should_federate?
+    return false if user.blank?
+
+    title_ko.present?
+  end
+
+  #: () -> Integer
+  def likes_count
+    likers_count.to_i
+  end
+
+  # ── Private Instance Methods ─────────────────────────────────────────
   private
 
-  def set_initial_url_and_host #: void
-    parsed_url = URI.parse(url)
-    if parsed_url.respond_to?(:query) && parsed_url.query
-      query_params = URI.decode_www_form(parsed_url.query || "").to_h
-      query_params.except!("utm_source", "utm_medium", "utm_campaign", "_bhlid", "ref", "utm_content", "utm_term", "ck_subscriber_id") if query_params.is_a?(Hash)
-      query_params.except!("t", "feature") if parsed_url.host&.match?(/youtube/i)
-      self.url = query_params.empty? ? "#{parsed_url.scheme}://#{parsed_url.host}#{parsed_url.path}" : "#{parsed_url.scheme}://#{parsed_url.host}#{parsed_url.path}?#{query_params.map { |k, v| "#{k}=#{v}" }.join('&')}"
-    end
-    self.host = parsed_url.host
-    self.is_youtube = true if host&.match?(/youtube/i)
-    # IGNORE_HOSTS 패턴에 맞는 호스트이거나 경로가 너무 짧으면 discard
-    self.deleted_at = Time.zone.now if !is_youtube && (parsed_url.path.nil? || parsed_url.path.size < 2) || Article.should_ignore_url?(parsed_url.to_s)
-  rescue URI::InvalidURIError
-    logger.error "Invalid URI for initial URL parsing: #{url}"
-    self.deleted_at = Time.zone.now # 유효하지 않은 URL은 삭제 처리
+  #: () -> User?
+  def bot_user
+    User.first_bot
   end
 
-  def set_youtube_metadata #: void
-    self.slug = youtube_id
-    # self.url = "https://#{YOUTUBE_NORMALIZED_HOST}/watch?v=#{youtube_id}"
-    video = Yt::Video.new id: youtube_id
-    self.published_at = video.published_at if video&.published_at.is_a?(Time)
-    self.title = video.title if video&.title.is_a?(String)
-  rescue Yt::Error => e # Yt 라이브러리 관련 오류 처리
-    logger.error "YouTube API error for video ID #{youtube_id}: #{e.message}"
-    # 필요하다면 title, published_at을 nil 또는 기본값으로 설정
-  end
+  #: (String action, ?actor: (Federails::Actor)?, ?to: untyped, ?cc: untyped) -> void
+  def create_federails_activity(action, actor: nil, to: nil, cc: nil)
+    actor ||= federails_actor || bot_user&.federails_actor
+    return if actor.blank?
 
-  #: (String body) -> void
-  def set_webpage_metadata(fetch_body)
-    logger.debug "Setting webpage metadata for #{url}"
-    return if deleted_at.present?
-
-    self.slug = URI.parse(url)&.path.split("/").last.split(".").first
-    self.published_at = url_to_published_at || extract_published_at_from_content(fetch_body) || Time.zone.now
-    return if title.present?
-
-    doc = Nokogiri::HTML5(fetch_body)
-    temp_title = doc.at("title")&.text
-    self.title = temp_title.strip.gsub(/\s+/, " ") if temp_title.is_a?(String)
-    self.body = Readability::Document.new(fetch_body).content if body.blank?
-  rescue URI::InvalidURIError
-    logger.error "Invalid URI for webpage metadata: #{url}"
-    # slug, published_at, title 등에 대한 기본값 설정 또는 오류 처리
-  end
-
-  #: (Faraday::Response response) -> void
-  def handle_redirection(response, count = 0)
-    logger.debug response.status
-    logger.debug count
-    return unless response.status.between?(300, 399) && response.headers["location"]
-    return if count > 3
-
-    logger.debug response.headers["location"]
-    # 3xx 응답인 경우 리다이렉트된 URL을 사용
-    redirect_url = response.headers["location"]
-    self.url = if redirect_url.start_with?("http")
-                 redirect_url
-    else
-                 URI.join(url, redirect_url).to_s
-    end
-
-    response = fetch_url_content
-    handle_redirection(response, count + 1)
-  end
-
-  def fetch_url_content #: Faraday::Response?
-    Faraday.get(url)
-  rescue Faraday::Error => e
-    logger.error "Error fetching URL #{url}: #{e.message}"
-    nil
-  end
-
-  def url_to_published_at #: DateTime?
-    match_data = URI.parse(url).path.match(%r{(\d{4})[/-](\d{1,2})[/-](\d{1,2})})
-    return unless match_data
-
-    Time.zone.parse("#{match_data[1]}-#{match_data[2]}-#{match_data[3]}")
-  rescue URI::InvalidURIError
-    logger.error "Invalid URI for published_at extraction: #{url}"
-    nil
-  end
-
-  #: (String body) -> DateTime?
-  def extract_published_at_from_content(body)
-    doc = Nokogiri::HTML(body)
-    published_at = if doc.at("time").present?
-      time_element = doc.at("time")
-      if time_element.[]("datetime").present?
-        Time.zone.parse(time_element.[]("datetime"))
-      else
-        time_element.text.present? ? Time.zone.parse(time_element.text) : nil
+    if action == "Update"
+      if Federails::Activity.exists?(entity: self, action: "Create")
+        logger.info do
+          {
+            message: "[Federation] Skipping repeated Article update activity",
+            article_id: id,
+            federated_url: federated_url
+          }.inspect
+        end
+        return
       end
-    elsif doc.css(".date").present?
-      # Nokogiri::HTML::Document에서 class가 "date"인 요소를 찾는 방법
-      date_element = doc.css(".date").first
-      date_element.text.present? ? Time.zone.parse(date_element.text) : nil
+      action = "Create"
     end
-    return published_at if published_at.is_a?(Time)
 
-    if body.strip.match(/([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})/)
-      match_data = body.strip.match(/([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})/)
-      Time.zone.parse("#{match_data[3]}-#{match_data[1]}-#{match_data[2]}")
-    elsif body.strip.match(%r{(\d{4})[/-](\d{1,2})[/-](\d{1,2})})
-      match_data = body.strip.match(%r{(\d{4})[/-](\d{1,2})[/-](\d{1,2})})
-      Time.zone.parse("#{match_data[1]}-#{match_data[2]}-#{match_data[3]}")
-    else
-      nil
-    end
-  rescue StandardError => e
-    logger.error "Error parsing published_at: #{e.message}"
-    nil
+    super(action, actor: actor, to: to, cc: cc)
   end
 
-  private
-
+  #: () -> void
   def clear_rss_cache
     Rails.cache.delete("rss_articles")
+  end
+
+  def should_generate_new_friendly_id? #: bool
+    false
+  end
+
+  def random_slug #: String
+    "#{Time.zone.now.strftime('%Y%m%d')}-#{SecureRandom.hex(4)}"
+  end
+
+  def metadata_service #: Articles::MetadataPreparationService
+    @metadata_service ||= Articles::MetadataPreparationService.new
   end
 end

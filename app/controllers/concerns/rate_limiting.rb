@@ -1,16 +1,15 @@
 # frozen_string_literal: true
+# rbs_inline: enabled
 
 module RateLimiting
   extend ActiveSupport::Concern
 
-  included do
-    before_action :check_rate_limit, only: [ :create, :update ]
-  end
-
   private
 
   def check_rate_limit
-    return if Current.user&.admin?
+    user = current_user if respond_to?(:current_user) && current_user
+
+    return if user&.admin?
 
     cache_key = "rate_limit:#{request.remote_ip}:#{controller_name}"
     current_count = Rails.cache.read(cache_key) || 0

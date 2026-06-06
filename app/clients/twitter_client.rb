@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class TwitterClient
@@ -9,7 +8,7 @@ class TwitterClient
     oauth_config = Preference.get_object("xcom_oauth")
     raise ArgumentError, "OAuth 설정이 비어있습니다: xcom_oauth" if oauth_config.blank?
 
-    oauth_client = OauthClientService.call(oauth_config)
+    oauth_client = OauthClient.build(oauth_config)
     token = check_token(oauth_client, oauth_config)
     @client = Faraday.new(url: "https://api.x.com/2/") do |faraday|
       faraday.headers["Authorization"] = "Bearer #{token.token}"
@@ -21,6 +20,11 @@ class TwitterClient
 
   def post(text)
     response = client.post("tweets", { text: text }.to_json)
+    response
+  end
+
+  def delete(tweet_id)
+    response = client.delete("tweets/#{tweet_id}")
     response
   end
 

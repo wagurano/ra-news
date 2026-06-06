@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class ApplicationJob < ActiveJob::Base
@@ -15,35 +14,14 @@ class ApplicationJob < ActiveJob::Base
 
   # Provides default URL options for URL helpers in jobs.
   def default_url_options
-    { host: "ruby-news.kr" }
+    Rails.application.routes.default_url_options
   end
 
   rescue_from(StandardError) do |exception|
-    honeybadger_context = {
-      job: {
-        class: self.class.name,
-        arguments: arguments,
-        queue_name: queue_name,
-        job_id: job_id,
-        executions: executions
-      },
-      environment: Rails.env
-    }
-
     # Log error details
     logger.error "Job failed: #{self.class.name} with arguments: #{arguments}"
     logger.error "Error: #{exception.class.name} - #{exception.message}"
     logger.error exception.backtrace.join("\n") if Rails.env.development?
-
-    # Report to error tracking service
-    Honeybadger.notify(
-      exception,
-      error_class: exception.class.name,
-      backtrace: exception.backtrace,
-      error_message: exception.message,
-      context: honeybadger_context,
-      tags: [ queue_name, self.class.name.underscore ]
-    )
 
     # Re-raise for proper job failure handling
     raise exception

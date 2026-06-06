@@ -1,12 +1,16 @@
 # Below are the routes for madmin
 namespace :madmin do
+  namespace :active_storage do
+    resources :attachments
+  end
   resources :preferences
-  resources :comments
   resources :tags
   resources :articles do
     member do
       put :discard
       put :restore
+      put :mark_unrelated
+      put :reprocess
     end
   end
   resources :sites do

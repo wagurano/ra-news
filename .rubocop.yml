@@ -3,13 +3,72 @@ inherit_gem: { rubocop-rails-omakase: rubocop.yml }
 
 inherit_from: .rubocop_todo.yml
 
+plugins:
+  - rubocop-rbs_inline
+  - rubocop-minitest
+  - rubocop-i18n
+
 AllCops:
   RubyInterpreters:
     - ruby
     - rake
   NewCops: enable
-  TargetRubyVersion: 3.4
-  TargetRailsVersion: 8.0
+  TargetRubyVersion: 4.0
+  TargetRailsVersion: 8.1
+  Exclude:
+    - "app/components/**/*"
+    - "app/views/**/*"
+    - "config/**/*"
 
 Layout/LeadingCommentSpace:
+  Enabled: false
+
+Bundler/OrderedGems:
+  Enabled: true
+
+Metrics/ClassLength:
+  Enabled: true
+  Max: 200
+  Exclude:
+    - "test/**/*"
+    - "db/**/*"
+    - "spec/**/*"
+
+Metrics/ModuleLength:
+  Enabled: true
+  Exclude:
+    - "test/**/*"
+    - "db/**/*"
+    - "spec/**/*"
+
+Metrics/MethodLength:
+  Enabled: true
+  Max: 100
+  Exclude:
+    - "test/**/*"
+    - "db/**/*"
+    - "db/migrate/**/*"
+
+Metrics/AbcSize:
+  Enabled: true
+  Max: 100
+  Exclude:
+    - "test/**/*"
+    - "db/**/*"
+
+Metrics/CyclomaticComplexity:
+  Enabled: true
+  Max: 100
+  Exclude:
+    - "test/**/*"
+    - "db/**/*"
+
+Metrics/PerceivedComplexity:
+  Enabled: true
+  Max: 100
+  Exclude:
+    - "test/**/*"
+    - "db/**/*"
+
+I18n/GetText/DecorateFunctionMessage:
   Enabled: false

@@ -1,12 +1,11 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class SocialController < ApplicationController
   # provider OAuth2 인증 시작
   def provider_authorize #: () -> void
     oauth_config = Preference.get_object("#{provider}_oauth")
-    client = OauthClientService.call(oauth_config)
+    client = OauthClient.build(oauth_config)
 
     # PKCE 사용 (X.com OAuth2.0 요구사항)
     code_verifier = SecureRandom.urlsafe_base64(32)
@@ -29,7 +28,7 @@ class SocialController < ApplicationController
     end
 
     oauth_config = Preference.get_object("#{provider}_oauth")
-    client = OauthClientService.call(oauth_config)
+    client = OauthClient.build(oauth_config)
 
     begin
       token = client.auth_code.get_token(

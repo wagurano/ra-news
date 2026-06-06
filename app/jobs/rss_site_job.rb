@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class RssSiteJob < ApplicationJob
@@ -14,7 +13,12 @@ class RssSiteJob < ApplicationJob
   def perform(ids)
     ids = [ ids ] unless ids.is_a?(Array)
     site_id = ids.shift
-    site = Site.find(site_id)
+    site = Site.kept.find_by(id: site_id)
+    if site.nil?
+      RssSiteJob.perform_later(ids) unless ids.empty?
+      return
+    end
+
     feed = fetch_feed(site)
     unless feed
       RssSiteJob.perform_later(ids) unless ids.empty?
@@ -24,6 +28,14 @@ class RssSiteJob < ApplicationJob
     create_articles_from_feed(feed, site)
 
     site.update!(last_checked_at: Time.zone.now)
+  rescue Faraday::ForbiddenError, Faraday::UnauthorizedError => e
+    logger.warn("Site #{site.id} (#{site.name}) discarded: #{e.class} - #{e.message}")
+    site.discard!
+  rescue Faraday::TooManyRequestsError => e
+    logger.warn("Site #{site.id} (#{site.name}) rate limited, skipping: #{e.message}")
+  rescue StandardError => e
+    logger.error("Site #{site.id} (#{site.name}) failed: #{e.class} - #{e.message}")
+  ensure
     RssSiteJob.perform_later(ids) unless ids.empty?
   end
 

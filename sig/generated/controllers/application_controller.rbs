@@ -1,9 +1,11 @@
 # Generated from app/controllers/application_controller.rb with RBS::Inline
 
 class ApplicationController < ActionController::Base
-  include Authentication
+  include LocaleSwitcher
+
+  def n_plus_one_detection: () -> untyped
 
   private
 
-  def redirect_old_domain: () -> untyped
+  def cacheable_page!: (?max_age: untyped) -> untyped
 end

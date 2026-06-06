@@ -1,13 +1,10 @@
 # Generated from app/services/content_service.rb with RBS::Inline
 
-class ContentService < ApplicationService
+class ContentService < OperationService
   include LinkHelper
 
-  attr_reader article: Article
-
-  def initialize: (untyped article) -> untyped
-
-  def call: () -> untyped
+  # : (Article article) -> Dry::Monads::Result
+  def call: (Article article) -> Dry::Monads::Result
 
   # : (url: String) -> String?
   def execute_html: (url: String) -> String?
@@ -17,8 +14,18 @@ class ContentService < ApplicationService
 
   private
 
-  # : (String url, ?Integer? count) -> Faraday::Response
-  def handle_redirection: (String url, ?Integer? count) -> Faraday::Response
+  # : (String url) -> bool
+  def github_url?: (String url) -> bool
 
-  def format_transcript: (untyped actions) -> untyped
+  # : (String url) -> String?
+  def github_readme_url: (String url) -> String?
+
+  # : (String url, ?Integer? count) -> Faraday::Response
+  def faraday_fetch_html: (String url, ?Integer? count) -> Faraday::Response
+
+  # : (String url) -> String?
+  def mcp_fetch_html: (String url) -> String?
+
+  # : (Array[untyped]? actions) -> String?
+  def format_transcript: (Array[untyped]? actions) -> String?
 end

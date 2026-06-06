@@ -1,10 +1,16 @@
 # Generated from app/controllers/articles_controller.rb with RBS::Inline
 
 class ArticlesController < ApplicationController
-  include Pagy::Backend
+  include Pagy::Method
 
-  # GET /articles or /articles.json
+  SEARCH_TERM_MAX_LENGTH: ::Integer
+
+  # GET /articles
   def index: () -> untyped
+
+  def others: () -> untyped
+
+  def tag: () -> untyped
 
   def show: () -> untyped
 
@@ -21,4 +27,12 @@ class ArticlesController < ApplicationController
 
   # Only allow a list of trusted parameters through.
   def article_params: () -> untyped
+
+  def existing_article: () -> untyped
+
+  def liked_article_ids: (untyped articles) -> untyped
+
+  def sidebar_tags: () -> untyped
+
+  def normalized_search_term: () -> untyped
 end

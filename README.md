@@ -1,6 +1,6 @@
-[![CI](https://github.com/stadia/ra-news/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/stadia/ra-news/actions/workflows/ci.yml)
+[![CI](https://github.com/stadia/ruby-news/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/stadia/ruby-news/actions/workflows/ci.yml)
 
-# Ruby-News (RA News)
+# Ruby-News
 
 Ruby-News는 **한국어로 Ruby/Rails 관련 뉴스를 모아 보여주는 AI 기반 뉴스 허브**입니다.  
 RSS, 이메일 뉴스레터, YouTube, Hacker News 등 다양한 소스를 수집하고, AI로 한국어 요약과 메타데이터를 생성해 제공합니다.
@@ -27,11 +27,12 @@ RSS, 이메일 뉴스레터, YouTube, Hacker News 등 다양한 소스를 수집
   - Hotwire(Turbo/Stimulus) 기반 SPA-like 탐색
   - Tailwind CSS 4.2 기반 반응형 UI
   - 중첩 댓글(쓰레드) 시스템
+  - 대댓글(Web Reply) 브라우저 푸시 알림
   - 태그 기반 필터링 및 탐색
 - **관리/운영**
   - Madmin 기반 관리자 대시보드
   - Solid Queue/Cache/Cable을 사용하는 Rails 8 백그라운드 작업 및 실시간 기능
-  - Honeybadger, GitHub Actions, Docker를 통한 모니터링/CI/CD
+  - Honeybadger, New Relic, GitHub Actions, Docker를 통한 모니터링/CI/CD
 
 ---
 
@@ -39,7 +40,7 @@ RSS, 이메일 뉴스레터, YouTube, Hacker News 등 다양한 소스를 수집
 
 ### 백엔드
 
-- **Ruby 3.4**
+- **Ruby 4.0**
 - **Rails 8** (Solid Queue / Solid Cache / Solid Cable)
 - **PostgreSQL**
   - 한국어/영어 tsvector 기반 전문 검색
@@ -113,6 +114,9 @@ RSS, 이메일 뉴스레터, YouTube, Hacker News 등 다양한 소스를 수집
 - **GmailArticleJob**
   - 이메일 뉴스레터(Gmail)에서 링크 추출
   - 관련 기사 생성 및 처리
+- **ReplyNotificationJob**
+  - 내 댓글에 답글이 달리면 Web Push 알림 발송
+  - 만료/무효 구독 정리 및 키 불일치 구독 재등록 유도
 
 > 모든 Job은 Honeybadger 보고 및 재시도 정책을 고려하여 작성되어 있습니다.
 
@@ -138,10 +142,15 @@ RSS, 이메일 뉴스레터, YouTube, Hacker News 등 다양한 소스를 수집
 
 ### 1. 요구 사항
 
-- Ruby 3.4
-- PostgreSQL (pgvector 확장 활성화)
+- Ruby 4.0
+- PostgreSQL 14+ with 확장:
+  - pg_bigm (바이그램 전문 검색)
+  - textsearch_ko (한국어 형태소 분석)
+  - pgvector (벡터 임베딩)
 - Node.js (Tailwind 빌드용)
 - Redis (옵션: 캐시/백그라운드 처리 구성에 따라)
+
+> **macOS 사용자**: PostgreSQL 확장 설치 방법은 [PostgreSQL 확장 설치 가이드](docs/postgresql-extensions.md)를 참고하세요.
 
 ### 2. 의존성 설치
 
@@ -196,8 +205,40 @@ CI 파이프라인은 위 명령들을 기준으로 구성되어 있습니다.
   - `config/credentials.yml.enc`에 AI 키(Gemini/OpenAI 등), 외부 API 자격증명 저장
 - `.env` / 환경 변수
   - 로컬 개발에서는 `.env`를 사용해 DB, 메일, 외부 서비스 설정
+- 운영 모니터링
+  - `HONEYBADGER_API_KEY`: production 예외 추적 및 release workflow 배포 추적
+  - `NEW_RELIC_LICENSE_KEY`: production New Relic 에이전트 활성화
 - 메일/Gmail/YouTube/HN
   - 각 클라이언트 별로 필요한 API 키/토큰/계정 정보를 환경 변수로 설정
+
+### 대댓글 푸시 알림(Web Push) 설정
+
+대댓글 푸시 알림 기능을 사용하려면 아래 환경 변수가 반드시 필요합니다.
+
+```bash
+WEB_PUSH_VAPID_PUBLIC_KEY=...
+WEB_PUSH_VAPID_PRIVATE_KEY=...
+WEB_PUSH_VAPID_SUBJECT=mailto:admin@example.com
+
+# 선택: VAPID JWT 만료(초). 기본 600초, 최대 43200초(12시간)
+WEB_PUSH_VAPID_EXPIRATION_SECONDS=600
+```
+
+- `WEB_PUSH_VAPID_PUBLIC_KEY`: 브라우저 구독 시 사용되는 공개 키
+- `WEB_PUSH_VAPID_PRIVATE_KEY`: 서버 발송 서명용 개인 키 (절대 외부 노출 금지)
+- `WEB_PUSH_VAPID_SUBJECT`: `mailto:` 또는 `https:` 형식의 연락처/주체 정보
+
+VAPID 키 생성은 Rails console에서 수행할 수 있습니다.
+
+```ruby
+vapid_key = WebPush.generate_key
+vapid_key.public_key
+vapid_key.private_key
+```
+
+키를 교체하면 기존 브라우저 구독은 무효화될 수 있습니다.
+- 사용자가 사이트를 다시 방문하면 클라이언트가 자동 재구독을 시도합니다.
+- `VAPID public key mismatch` 오류가 발생한 기존 구독은 서버에서 정리됩니다.
 
 ---
 
@@ -229,7 +270,7 @@ CI 파이프라인은 위 명령들을 기준으로 구성되어 있습니다.
 - Steep를 사용해 서비스/도메인 레이어 시그니처를 검증
 - ApplicationJob, 클라이언트 레이어에서
   - 외부 API 에러를 공통 포맷으로 감싸고
-  - Honeybadger로 보고하는 패턴 사용
+  - production에서는 Honeybadger 컨텍스트와 함께 보고하는 패턴 사용
 
 ---
 

@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class MastodonClient
@@ -9,7 +8,7 @@ class MastodonClient
     oauth_config = Preference.get_object("mastodon_oauth")
     raise ArgumentError, "OAuth 설정이 비어있습니다: mastodon_oauth" if oauth_config.blank?
 
-    oauth_client = OauthClientService.call(oauth_config)
+    oauth_client = OauthClient.build(oauth_config)
     token = check_token(oauth_client, oauth_config)
     @client = Faraday.new(url: oauth_config.site) do |faraday|
       faraday.headers["Authorization"] = "Bearer #{token.token}"
@@ -21,6 +20,11 @@ class MastodonClient
 
   def post(text)
     response = client.post("api/v1/statuses", { status: text }.to_json)
+    response
+  end
+
+  def delete(status_id)
+    response = client.delete("api/v1/statuses/#{status_id}")
     response
   end
 

@@ -1,33 +1,12 @@
 {
   "mcpServers": {
-    "serena": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server",
-        "--context",
-        "ide-assistant",
-        "--project",
-        "./"
-      ]
-    },
     "sequential-thinking": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-    },
-    "postgresql-mcp": {
-      "command": "npx",
-      "args": [
-        "@henkey/postgres-mcp-server",
-        "--connection-string",
-        "postgresql://localhost:5432/ra-news_development"
-      ]
     }
   },
   "context": {
-    "fileName": ["AGENTS.md", "GEMINI.md"],
+    "fileName": ["AGENTS.md"],
     "loadFromIncludeDirectories": true,
     "fileFiltering": {
       "respectGitIgnore": true

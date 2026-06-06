@@ -1,0 +1,38 @@
+# frozen_string_literal: true
+
+require "test_helper"
+
+class SlackNotifierTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+
+  setup do
+    @article = articles(:ruby_article)
+    SlackDelivery.where(article: @article).delete_all
+  end
+
+  test "channel 기준으로 기사 알림 잡을 enqueue한다" do
+    assert_enqueued_jobs 2, only: SlackArticleDeliveryJob do
+      SlackNotifier.notify(@article)
+    end
+
+    enqueued = enqueued_jobs.select { |j| j[:job] == SlackArticleDeliveryJob }
+    channel_ids = enqueued.map { |j| j[:args][1] }.sort
+
+    assert_equal SlackChannel.delivery_ready.order(:id).pluck(:id), channel_ids
+  end
+
+  test "같은 기사에 대해 두 번 호출해도 각 channel마다 잡이 enqueue된다" do
+    assert_enqueued_jobs 4, only: SlackArticleDeliveryJob do
+      SlackNotifier.notify(@article)
+      SlackNotifier.notify(@article)
+    end
+  end
+
+  test "confirmed 되지 않은 기사는 발송하지 않는다" do
+    article = articles(:site_only_article)
+
+    assert_no_enqueued_jobs only: SlackArticleDeliveryJob do
+      SlackNotifier.notify(article)
+    end
+  end
+end

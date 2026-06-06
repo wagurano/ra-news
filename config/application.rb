@@ -6,7 +6,7 @@ require "rails/all"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
-module AlNews
+module RubyNews
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
     config.load_defaults 8.0
@@ -24,7 +24,7 @@ module AlNews
     config.time_zone = "Asia/Seoul"
     # config.eager_load_paths << Rails.root.join("extras")
 
-    config.i18n.available_locales = %w[en ko]
+    config.i18n.available_locales = %w[en ko ja]
     config.i18n.default_locale = :ko
 
     config.mission_control.jobs.base_controller_class = "Madmin::ApplicationController"
@@ -35,5 +35,12 @@ module AlNews
 
     # Enable query log tags around perform for better debugging
     config.active_job.log_query_tags_around_perform = true
+
+    config.rails_semantic_logger.started = true
+    config.rails_semantic_logger.processing = true
+    config.rails_semantic_logger.rendered = true
+    config.rails_semantic_logger.quiet_assets = true
+    config.colorize_logging = false
+    config.rails_semantic_logger.format = :json
   end
 end

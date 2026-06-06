@@ -1,8 +1,9 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class SocialPostJob < ApplicationJob
+  include JobRateLimiting
+
   queue_as :default
 
   #: (Integer id) -> void
@@ -11,16 +12,31 @@ class SocialPostJob < ApplicationJob
 
     scope = Article.kept
     scope = if id.nil?
-      scope.confirmed.where("is_posted = ?", false).where(created_at: created_at..).limit(50)
+      scope.confirmed.where("is_posted = ?", false).where(created_at: created_at..).limit(4)
     else
       scope.where("id = ? AND is_posted = ?", id, false)
     end
 
     scope.find_each do |article|
-      TwitterService.call(article)
-      MastodonService.call(article)
+      unless check_rate_limit
+        logger.warn("SocialPostJob: rate limit reached, stopping batch early")
+        break
+      end
+
+      TwitterService.new.call(article)
+      MastodonService.new.call(article)
+      SlackNotifier.notify(article)
+      DiscordNotifier.notify(article)
       article.update(is_posted: true)
       sleep 2
     end
+  end
+
+  def rate_limit_threshold #: Integer
+    2
+  end
+
+  def rate_limit_window #: ActiveSupport::Duration
+    5.minutes
   end
 end

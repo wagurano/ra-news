@@ -15,11 +15,24 @@ production:
     command: "RssSitePageJob.enqueue_all"
     schedule: "0 6 * * *"
   sitemap_refresh:
-    command: "SitemapService.call"
+    command: "SitemapBuilder.build"
     schedule: "30 * * * 1-5"
   article_batch_job:
     class: "ArticleBatchJob"
-    schedule: "0 */1 * * *"
+    schedule: "*/5 * * * *"
   social_post_job:
     class: "SocialPostJob"
-    schedule: "30 */1 * * *"
+    schedule: "*/10 8-19 * * *"
+  reddit_site_job:
+    class: RedditSiteJob
+    schedule: "0 */4 * * *"
+  discarded_article_cleanup_job:
+    class: "DiscardedArticleCleanupJob"
+    schedule: "0 4 * * 0"
+  japanese_temp_job:
+    class: "JapaneseTempJob"
+    schedule: "*/20 * * * *"
+  federails_sync_hosts:
+    command: "Federails::Maintenance::HostsUpdater.run"
+    schedule: "15 3 * * *"
+    queue: federation

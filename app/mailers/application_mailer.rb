@@ -1,8 +1,9 @@
 # frozen_string_literal: true
-
 # rbs_inline: enabled
 
 class ApplicationMailer < ActionMailer::Base
-  default from: "from@example.com"
+  include RecipientHostRouting
+
+  default from: "bot@ruby-news.dev"
   layout "mailer"
 end

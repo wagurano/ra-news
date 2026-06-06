@@ -1,0 +1,74 @@
+# Generated from app/models/post.rb with RBS::Inline
+
+class Post < ApplicationRecord
+  # ── Constants ────────────────────────────────────────────────────────
+  MAX_BODY_LENGTH: ::Integer
+
+  extend FriendlyId
+
+  include HtmlSanitizable
+
+  include Federails::DataEntity
+
+  include FederailsLikeable
+
+  # : () -> (User | Federails::Actor)?
+  def federation_actor_entity: () -> (User | Federails::Actor)?
+
+  # : () -> bool
+  def should_federate?: () -> bool
+
+  # : () -> Hash[String, untyped]
+  def to_activitypub_object: () -> Hash[String, untyped]
+
+  # : () -> Integer
+  def likes_count: () -> Integer
+
+  # : () -> bool
+  def comment?: () -> bool
+
+  # : () -> (Post | Article)
+  def reply: () -> (Post | Article)
+
+  # : () -> Array[String]
+  def federation_reply_recipients: () -> Array[String]
+
+  # : () -> String
+  def author_name: () -> String
+
+  # : () -> String?
+  def author_host: () -> String?
+
+  private
+
+  def create_federails_activity: (untyped action, ?actor: untyped, ?to: untyped, ?cc: untyped) -> untyped
+
+  # : () -> void
+  def enqueue_reply_notification: () -> void
+
+  # : () -> void
+  def enqueue_article_thumbnail: () -> void
+
+  # : () -> void
+  def set_federails_actor: () -> void
+
+  # : () -> void
+  def validate_user_or_actor: () -> void
+
+  # : () -> void
+  def validate_parent_post: () -> void
+
+  def should_generate_new_friendly_id?: () -> untyped
+
+  # : () -> String
+  def random_slug: () -> String
+
+  # : (Hash[String, untyped]) -> Hash[Symbol, untyped]
+  def self.from_activitypub_object: (Hash[String, untyped]) -> Hash[Symbol, untyped]
+
+  # : (Hash[String, untyped], attachments: Array[Hash[String, untyped]]) -> String
+  private def self.extract_body_from_activitypub_object: (Hash[String, untyped], attachments: Array[Hash[String, untyped]]) -> String
+
+  # : (Hash[String, untyped]) -> bool
+  private def self.handle_federated_object?: (Hash[String, untyped]) -> bool
+end
